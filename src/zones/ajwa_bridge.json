@@ -1,0 +1,11 @@
+{
+  "name": "ajwa_bridge_generic",
+  "description": "Placeholder zone for the under-bridge wrong-side cut near Ajwa Road Bridge. Replace ring coordinates with real ones from a GPS-tagged map after recording the actual trace.",
+  "legal_hint": "legal path crosses the bridge deck, U-turns at the far side, returns",
+  "ring": [
+    {"lat": 22.34200, "lon": 73.15100},
+    {"lat": 22.34150, "lon": 73.15250},
+    {"lat": 22.34200, "lon": 73.15300},
+    {"lat": 22.34250, "lon": 73.15150}
+  ]
+}

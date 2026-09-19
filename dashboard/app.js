@@ -1,18 +1,72 @@
+const JUNCTION = [22.3228, 73.2550];
+
 const state = {
-  zone: null,       // leaflet layer
-  route: null,      // leaflet layer
-  traceLayer: null,
-  cutLayer: null,
   fixtures: null,
   current: null,
   playing: false,
   timer: null,
 };
 
-const map = L.map("map").setView([22.3416, 73.1512], 16);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-}).addTo(map);
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {
+      basemap: {
+        type: "raster",
+        tiles: [
+          "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+          "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+          "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        ],
+        tileSize: 256,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      },
+      route: { type: "geojson", data: emptyGeojson() },
+      zone: { type: "geojson", data: emptyGeojson() },
+      lanes: { type: "geojson", data: emptyGeojson() },
+      trace: { type: "geojson", data: emptyGeojson() },
+      cut: { type: "geojson", data: emptyGeojson() },
+    },
+    layers: [
+      { id: "basemap", type: "raster", source: "basemap" },
+      { id: "route-layer", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#16a34a", "line-width": 3.5, "line-opacity": 0.9 } },
+      { id: "zone-fill", type: "fill", source: "zone", paint: { "fill-color": "#e11d48", "fill-opacity": 0.18 } },
+      { id: "zone-line", type: "line", source: "zone", paint: { "line-color": "#e11d48", "line-width": 1.5, "line-dasharray": [2, 1.5], "line-opacity": 0.85 } },
+      { id: "lane-layer", type: "line", source: "lanes", layout: { "line-cap": "round" }, paint: { "line-color": "#0ea5e9", "line-width": 2, "line-dasharray": [1, 2.5], "line-opacity": 0.9 } },
+      { id: "trace-line", type: "line", source: "trace", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#d97706", "line-width": 3, "line-opacity": 0.9 } },
+      { id: "cut-line", type: "line", source: "cut", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#e11d48", "line-width": 6, "line-opacity": 0.95 } },
+    ],
+  },
+  center: JUNCTION,
+  zoom: 16,
+});
+
+function emptyGeojson() {
+  return { type: "FeatureCollection", features: [] };
+}
+
+function lineFeatures(coords) {
+  return [{ type: "Feature", geometry: { type: "LineString", coordinates: coords } }];
+}
+
+function setSource(name, features) {
+  if (map.getSource(name)) {
+    map.getSource(name).setData({ type: "FeatureCollection", features });
+  }
+}
+
+function ensureSources() {
+  ["route", "zone", "lanes", "trace", "cut"].forEach((name) => {
+    if (!map.getSource(name)) map.addSource(name, emptyGeojson());
+  });
+}
+
+function clearGeo() {
+  ["route", "zone", "lanes", "trace", "cut"].forEach((name) => {
+    if (map.getSource(name)) map.getSource(name).setData(emptyGeojson());
+  });
+}
 
 async function fetchJson(url, body) {
   const res = await fetch(url, {
@@ -23,99 +77,71 @@ async function fetchJson(url, body) {
   return res.json();
 }
 
-async function loadTraceData(name) {
-  return fetchJson("/api/trace/" + encodeURIComponent(name));
-}
-
-async function loadZoneData(name) {
-  return fetchJson("/api/zone/" + encodeURIComponent(name));
-}
-
 function initUi() {
   const traceSel = document.getElementById("trace");
-  const zoneSel = document.getElementById("zone");
-  const routeSel = document.getElementById("route");
-
   fetchJson("/api/fixtures").then((fx) => {
     state.fixtures = fx;
     fx.traces.forEach((t) => {
       const o = document.createElement("option");
       o.value = t;
-      o.textContent = t;
+      o.textContent = fx.trace_labels[t] || t;
       traceSel.appendChild(o);
     });
-    fx.zones.forEach((z) => {
-      const o = document.createElement("option");
-      o.value = z;
-      o.textContent = z;
-      zoneSel.appendChild(o);
-    });
-    fx.routes.forEach((r) => {
-      const o = document.createElement("option");
-      o.value = r;
-      o.textContent = r;
-      routeSel.appendChild(o);
-    });
-    // kick off with the illegal cut
+    showHint();
     audit();
   });
+}
+
+function showHint() {
+  const t = document.getElementById("trace").value;
+  const fx = state.fixtures;
+  document.getElementById("trace-hint").textContent = fx && fx.trace_labels[t] ? fx.trace_labels[t] : "";
 }
 
 async function audit() {
   stopPlayback();
   const trace = document.getElementById("trace").value;
-  const zones = [document.getElementById("zone").value];
-  const route = document.getElementById("route").value;
+  const zones = Object.keys(state.fixtures.zones);
+  const route = Object.keys(state.fixtures.routes)[0];
 
-  // draw geometry from source data
-  clearLayers();
-  const zoneData = await loadZoneData(zones[0]);
-  const zoneRing = zoneData.ring.map((p) => [p.lat, p.lon]);
-  state.zone = L.polygon(zoneRing, { color: "#e11d48", weight: 2, fillOpacity: 0.15 }).addTo(map);
-  zoneRing.forEach((ring) => map.addLayer(L.circleMarker(ring, { color: "#e11d48", radius: 4 })));
+  clearGeo();
+  const [zoneData, routeData, laneNames] = await Promise.all([
+    fetchJson("/api/zone/" + zones[0]),
+    fetchJson("/api/route/" + route),
+    Promise.resolve(state.fixtures.lanes),
+  ]);
 
-  if (route) {
-    const routeData = await loadTraceData(route);
-    const pts = routeData.points.map((p) => [p.lat, p.lon]);
-    state.route = L.polyline(pts, { color: "#16a34a", weight: 3, opacity: 0.85 }).addTo(map);
+  ensureSources();
+  setSource("zone", [{ type: "Feature", geometry: { type: "Polygon", coordinates: [zoneData.ring.map((p) => [p.lon, p.lat])] } }]);
+  setSource("route", lineFeatures(routeData.points.map((p) => [p.lon, p.lat])));
+
+  const laneFeats = [];
+  for (const ln of laneNames) {
+    const d = await fetchJson("/api/lane/" + ln);
+    laneFeats.push(...lineFeatures(d.points.map((p) => [p.lon, p.lat])));
   }
+  setSource("lanes", laneFeats);
 
-  const res = await fetchJson("/api/audit", { trace, zones, route });
+  const res = await fetchJson("/api/audit", { trace, zones, route, lanes: laneNames });
   state.current = res;
 
-  const tracePts = res.points.map((p) => [p.lat, p.lon]);
-  state.traceLayer = L.polyline(tracePts, {
-    color: VERDICT_COLOR(res.verdict),
-    weight: 3,
-    opacity: 0.9,
-  }).addTo(map);
-  res.points.forEach((p, i) => {
-    map.addLayer(
-      L.circleMarker([p.lat, p.lon], {
-        color: VERDICT_COLOR(res.verdict),
-        radius: 3,
-        fillColor: VERDICT_COLOR(res.verdict),
-        fillOpacity: 1,
-      })
-    );
-  });
+  const coords = res.points.map((p) => [p.lon, p.lat]);
+  setSource("trace", lineFeatures(coords));
+  if (res.cut && res.cut.length) setSource("cut", lineFeatures(res.cut.map((p) => [p.lon, p.lat])));
 
-  if (res.seg_start >= 0 && res.seg_end >= 0) {
-    const cut = res.points.slice(res.seg_start, res.seg_end + 1).map((p) => [p.lat, p.lon]);
-    state.cutLayer = L.polyline(cut, { color: "#e11d48", weight: 6, opacity: 0.95 }).addTo(map);
-  }
-
-  const bounds = L.latLngBounds(tracePts);
-  if (state.route) for (const p of state.route.getLatLngs()) bounds.extend(p);
-  if (state.zone) for (const p of state.zone.getLatLngs()[0]) bounds.extend(p);
-  map.fitBounds(bounds.pad(0.1));
-
+  fitJunction(coords);
   renderVerdict(res);
 }
 
+function fitJunction(coords) {
+  if (coords.length === 0) return map.jumpTo({ center: JUNCTION, zoom: 16 });
+  const bounds = new maplibregl.LngLatBounds();
+  coords.forEach((c) => bounds.extend(c));
+  map.fitBounds(bounds, { padding: 60, maxZoom: 17 });
+}
+
 function clearLayers() {
-  [state.zone, state.route, state.traceLayer, state.cutLayer].forEach((l) => l && map.removeLayer(l));
-  state.zone = state.route = state.traceLayer = state.cutLayer = null;
+  clearGeo();
 }
 
 function renderVerdict(res) {
@@ -126,23 +152,44 @@ function renderVerdict(res) {
   document.getElementById("state").textContent = res.state;
   document.getElementById("severity").textContent = res.severity;
 
-  const metrics = document.getElementById("metrics");
-  metrics.innerHTML = "";
-  if (res.metrics && "trace_len_m" in res.metrics) {
-    const m = res.metrics;
-    metrics.appendChild(field("trace distance", m.trace_len_m + " m"));
-    metrics.appendChild(field("legal route distance", m.route_len_m + " m"));
-    metrics.appendChild(field("shortcut factor", "x" + m.shortcut_factor));
-    metrics.appendChild(field("wrong-way bearing", m.bearing_delta_deg + " deg"));
-  } else if (res.metrics && res.metrics.anchor_problems) {
-    metrics.appendChild(field("anchor check", res.metrics.anchor_problems.join("; ")));
+  const vtype = document.getElementById("vtype");
+  if (res.violation_type && res.violation_type !== "") {
+    vtype.textContent = res.violation_type.replace("ViolationType.", "");
+    vtype.hidden = false;
   } else {
-    metrics.appendChild(field("no metrics", "n/a"));
+    vtype.hidden = true;
+    vtype.textContent = "";
   }
 
-  const review = document.getElementById("review-outcome");
-  review.textContent = "";
-  document.getElementById("review-btn").disabled = res.state !== "PENDING_REVIEW";
+  const metrics = document.getElementById("metrics");
+  metrics.innerHTML = "";
+  const m = res.metrics || {};
+  if ("trace_len_m" in m) {
+    metrics.appendChild(field("trace distance", m.trace_len_m + " m"));
+    metrics.appendChild(field("legal distance", m.route_len_m + " m"));
+    metrics.appendChild(field("shortcut factor", "x" + m.shortcut_factor));
+    if (m.bearing_delta_deg != null) metrics.appendChild(field("wrong-way bearing", m.bearing_delta_deg + " °"));
+  } else if ("bearing_delta_deg" in m) {
+    if (m.lane) metrics.appendChild(field("against lane", m.lane));
+    metrics.appendChild(field("lane bearing", (m.lane_bearing ?? m.route_bearing ?? 0) + " °"));
+    metrics.appendChild(field("trace bearing", (m.trace_bearing ?? 0) + " °"));
+    metrics.appendChild(field("wrong-way bearing", m.bearing_delta_deg + " °"));
+  } else if ("off_route_frac" in m) {
+    metrics.appendChild(field("points off route", m.off_route_count + " / " + m.total_points));
+    metrics.appendChild(field("off-route share", Math.round(m.off_route_frac * 100) + " %"));
+    metrics.appendChild(field("flag threshold", "≥ 20 %"));
+  } else {
+    metrics.appendChild(field("points", m.total_points ?? res.points?.length ?? "—"));
+    if (m.on_corridor) metrics.appendChild(field("on corridor", m.on_corridor));
+    metrics.appendChild(field("off-route tolerance", m.off_route_tolerance + " m"));
+  }
+
+  const replay = document.getElementById("play-btn");
+  replay.disabled = !res.points || !res.points.length;
+
+  const btn = document.getElementById("review-btn");
+  btn.disabled = res.state !== "PENDING_REVIEW";
+  document.getElementById("review-outcome").textContent = "";
 }
 
 function field(label, value) {
@@ -159,63 +206,97 @@ function field(label, value) {
 async function review() {
   const btn = document.getElementById("review-btn");
   btn.disabled = true;
-  btn.textContent = "Asking Tier-3 agent...";
+  btn.textContent = "Asking Tier-3 agent…";
   const out = document.getElementById("review-outcome");
+  out.className = "review-outcome";
 
   const body = {
     trace: document.getElementById("trace").value,
-    zones: [document.getElementById("zone").value],
-    route: document.getElementById("route").value,
+    zones: Object.keys(state.fixtures.zones),
+    route: Object.keys(state.fixtures.routes)[0],
+    lanes: state.fixtures.lanes,
   };
   try {
     const res = await fetchJson("/api/review", body);
-    out.textContent = res.agent_recommendation
-      ? `Tier-3 agent → ${res.agent_recommendation}`
-      : res.agent_text || "agent had nothing to say";
-    if (res.agent_error) out.textContent += ` (${res.agent_error})`;
+    const verdict = res.agent_recommendation || "—";
+    out.className = "review-outcome " + (verdict === "VIOLATION" ? "danger" : verdict === "NOISE" ? "warn" : "info");
+    out.textContent = "Tier-3 agent → " + verdict;
+    const detail = res.agent_text || res.engine_reason;
+    if (detail) out.textContent += "\n" + detail.slice(0, 220);
   } catch (e) {
+    out.className = "review-outcome info";
     out.textContent = "agent unreachable: " + e.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Ask Tier-3 agent";
+    btn.textContent = "Ask the Tier-3 review agent";
   }
 }
 
 function stopPlayback() {
   state.playing = false;
-  clearInterval(state.timer);
-  state.timer = null;
+  if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  if (map.getLayer("replay-marker")) map.removeLayer("replay-marker");
+  if (map.getLayer("replay-arrow")) map.removeLayer("replay-arrow");
+  if (map.getSource("replay")) map.removeSource("replay");
 }
 
-function VERDICT_COLOR(v) {
-  if (v === "CLEAN") return "#16a34a";
-  if (v === "VIOLATION") return "#e11d48";
-  return "#d97706";
-}
-
-async function play() {
-  if (!state.current) return;
-  if (state.traceLayer) map.removeLayer(state.traceLayer);
+function play() {
+  if (!state.current || !state.current.points || state.current.points.length < 2) return;
+  stopPlayback();
+  ensureSources();
+  state.playing = true;
 
   const pts = state.current.points;
+  const coords = pts.map((p) => [p.lon, p.lat]);
   let i = 0;
-  const marker = L.marker([pts[0].lat, pts[0].lon]).addTo(map);
-  // show the cut overlap as it animates if one exists
-  const chunk = L.polyline([], { color: VERDICT_COLOR(state.current.verdict), weight: 3, opacity: 0.9 }).addTo(map);
+
+  if (!map.getSource("replay")) map.addSource("replay", emptyGeojson());
+  if (!map.getLayer("replay-marker")) {
+    map.addLayer({
+      id: "replay-marker",
+      type: "circle",
+      source: "replay",
+      paint: {
+        "circle-color": "#0f172a",
+        "circle-radius": 7,
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 2,
+      },
+    });
+    map.addLayer({
+      id: "replay-arrow",
+      type: "line",
+      source: "replay",
+      layout: { "line-cap": "round" },
+      paint: { "line-color": "#0f172a", "line-width": 3, "line-opacity": 0.55 },
+    });
+  }
+  map.getSource("replay").setData({ type: "FeatureCollection", features: lineFeatures([coords[0]]) });
 
   state.timer = setInterval(() => {
     i = Math.min(i + 1, pts.length - 1);
-    chunk.setLatLngs(pts.slice(0, i + 1).map((p) => [p.lat, p.lon]));
-    marker.setLatLng([pts[i].lat, pts[i].lon]);
+    const ahead = Math.min(i + 3, pts.length - 1);
+    map.getSource("replay").setData({
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", geometry: { type: "Point", coordinates: coords[i] } },
+        lineFeatures(coords.slice(Math.max(0, i - 12), ahead + 1))[0],
+      ],
+    });
     if (i >= pts.length - 1) {
       clearInterval(state.timer);
       state.timer = null;
-      map.removeLayer(marker);
+      state.playing = false;
     }
-  }, 400);
+  }, 110);
 }
 
 window.addEventListener("DOMContentLoaded", initUi);
 window.audit = audit;
 window.review = review;
 window.play = play;
+
+map.on("load", () => {
+  ensureSources();
+  document.getElementById("coord-readout").textContent = "22.3228°N 73.2550°E";
+});

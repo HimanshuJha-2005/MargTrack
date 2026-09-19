@@ -3,15 +3,21 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>MargTrack — Ride Audit</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<title>MargTrack — Ride Audit · Ajwa Rd × NH48 flyover, Vadodara</title>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
 <link rel="stylesheet" href="/style.css"/>
 </head>
 <body>
 <header>
-  <div class="brand">Marg<span>Track</span></div>
-  <div class="tagline">GPS ride audit · legal route vs forbidden zones</div>
+  <div>
+    <div class="brand">Marg<span>Track</span></div>
+    <div class="tagline">Ride audit · Ajwa Road × NH48 flyover junction, Vadodara</div>
+  </div>
+  <div class="site">
+    <span id="coord-readout"></span>
+    <a href="https://www.openstreetmap.org/?mlat=22.32280&mlon=73.25500#map=17/22.3228/73.2550" target="_blank" rel="noreferrer">OpenStreetMap</a>
+  </div>
 </header>
 
 <main>
@@ -19,35 +25,35 @@
 
   <aside class="panel">
     <section class="controls">
-      <label>Trace
+      <label>Scenario
         <select id="trace"></select>
       </label>
-      <label>Forbidden zone
-        <select id="zone"></select>
-      </label>
-      <label>Legal route
-        <select id="route"></select>
-      </label>
       <div class="row">
-        <button onclick="audit()">Run audit</button>
-        <button onclick="play()">Replay trace</button>
+        <button id="run-btn" onclick="audit()">Run audit</button>
+        <button id="play-btn" onclick="play()" disabled>Replay trace</button>
       </div>
+      <p class="hint" id="trace-hint"></p>
     </section>
 
-    <section class="verdict-card">
+    <section class="verdict-card" id="verdict-card">
       <div class="verdict-row">
         <span id="verdict" class="badge">—</span>
-        <span>state: <strong id="state">—</strong> · severity: <strong id="severity">—</strong></span>
+        <span class="verdict-meta">
+          <span class="pill" id="vtype" hidden></span>
+          <span>state: <strong id="state">—</strong></span>
+          <span>severity: <strong id="severity">—</strong></span>
+        </span>
       </div>
-      <p id="reason">Select a trace and run the audit.</p>
+      <p id="reason">Pick a scenario and run the audit.</p>
       <div id="metrics"></div>
 
-      <button id="review-btn" onclick="review()" disabled>Tier-3 agent review</button>
+      <button id="review-btn" onclick="review()" disabled>Ask the Tier-3 review agent</button>
       <p id="review-outcome" class="review-outcome"></p>
     </section>
 
     <footer class="legend">
       <div><i class="sw leg"></i> legal route</div>
+      <div><i class="sw lane"></i> one-way lane</div>
       <div><i class="sw zone"></i> forbidden zone</div>
       <div><i class="sw trace"></i> GPS trace</div>
       <div><i class="sw cut"></i> flagged cut</div>

@@ -101,12 +101,13 @@ def build_review_agent(evidence: dict):
     return agent, dist_to_route_m, in_any_zone, cut_profile
 
 
-def review_event(trace: Trace, route_lats, route_lons, zones) -> dict:
+def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None) -> dict:
     """Run the engine, then the Tier-3 agent on a PENDING_REVIEW event.
 
+    Routed through one_way_lanes so wrong-way rides are seen by the engine.
     Returns a dict ready to print: engine verdict + agent recommendation.
     """
-    event = audit_trace(trace, route_lats, route_lons, zones)
+    event = audit_trace(trace, route_lats, route_lons, zones, one_way_lanes=one_way_lanes)
 
     if event.state.value != "PENDING_REVIEW":
         return {

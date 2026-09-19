@@ -278,12 +278,24 @@ def audit_trace(
                 verdict=Verdict.AMBIGUOUS,
                 reason=f"{off_count}/{len(trace.points)} points off legal route by >{off_route_m:.0f}m",
                 state=EventState.PENDING_REVIEW,
+                metrics={
+                    "off_route_count": off_count,
+                    "total_points": len(trace.points),
+                    "off_route_frac": round(off_count / len(trace.points), 3),
+                },
             )
 
     return DetectedEvent(
         verdict=Verdict.CLEAN,
         reason="trace follows legal corridor",
         state=EventState.CONFIRMED,
+        metrics={
+            "total_points": len(trace.points),
+            "on_corridor": "all"
+            if not route_lats
+            else f"{100 * on_corridor:.0f}%",
+            "off_route_tolerance": off_route_m,
+        },
     )
 
 

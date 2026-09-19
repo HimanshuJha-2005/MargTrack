@@ -9,15 +9,27 @@ const state = {
 
 const map = new maplibregl.Map({
   container: "map",
-  style: "https://tiles.openfreemap.org/styles/positron",
+  style: {
+    version: 8,
+    sources: {
+      basemap: {
+        type: "raster",
+        tiles: [
+          "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        ],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+      },
+    },
+    layers: [{ id: "basemap", type: "raster", source: "basemap" }],
+  },
   center: JUNCTION,
   zoom: 16,
   maxZoom: 19,
-  attributionControl: {
-    compact: true,
-    customAttribution:
-      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://openfreemap.org">OpenFreeMap</a>',
-  },
 });
 
 function emptyGeojson() {
@@ -78,11 +90,8 @@ async function fetchJson(url, body) {
 function ready() {
   return new Promise((resolve) => {
     if (map.isStyleLoaded()) return resolve();
-    map.on("load", () => {
-      ensureOverlay();
-      resolve();
-    });
-    setTimeout(resolve, 8000); // never hang the UI on style loading
+    map.on("load", () => resolve());
+    setTimeout(resolve, 8000);
   });
 }
 
@@ -115,7 +124,7 @@ async function audit() {
 
   clearGeo();
   await ready();
-  if (!ensureOverlay()) return;
+  ensureOverlay();
 
   const [zoneData, routeData, laneNames] = await Promise.all([
     fetchJson("/api/zone/" + zones[0]),

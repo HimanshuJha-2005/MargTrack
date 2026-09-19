@@ -9,37 +9,15 @@ const state = {
 
 const map = new maplibregl.Map({
   container: "map",
-  style: {
-    version: 8,
-    sources: {
-      basemap: {
-        type: "raster",
-        tiles: [
-          "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-          "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-          "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-        ],
-        tileSize: 256,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      },
-      route: { type: "geojson", data: emptyGeojson() },
-      zone: { type: "geojson", data: emptyGeojson() },
-      lanes: { type: "geojson", data: emptyGeojson() },
-      trace: { type: "geojson", data: emptyGeojson() },
-      cut: { type: "geojson", data: emptyGeojson() },
-    },
-    layers: [
-      { id: "basemap", type: "raster", source: "basemap" },
-      { id: "route-layer", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#16a34a", "line-width": 3.5, "line-opacity": 0.9 } },
-      { id: "zone-fill", type: "fill", source: "zone", paint: { "fill-color": "#e11d48", "fill-opacity": 0.18 } },
-      { id: "zone-line", type: "line", source: "zone", paint: { "line-color": "#e11d48", "line-width": 1.5, "line-dasharray": [2, 1.5], "line-opacity": 0.85 } },
-      { id: "lane-layer", type: "line", source: "lanes", layout: { "line-cap": "round" }, paint: { "line-color": "#0ea5e9", "line-width": 2, "line-dasharray": [1, 2.5], "line-opacity": 0.9 } },
-      { id: "trace-line", type: "line", source: "trace", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#d97706", "line-width": 3, "line-opacity": 0.9 } },
-      { id: "cut-line", type: "line", source: "cut", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#e11d48", "line-width": 6, "line-opacity": 0.95 } },
-    ],
-  },
+  style: "https://tiles.openfreemap.org/styles/positron",
   center: JUNCTION,
   zoom: 16,
+  maxZoom: 19,
+  attributionControl: {
+    compact: true,
+    customAttribution:
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://openfreemap.org">OpenFreeMap</a>',
+  },
 });
 
 function emptyGeojson() {
@@ -50,20 +28,40 @@ function lineFeatures(coords) {
   return [{ type: "Feature", geometry: { type: "LineString", coordinates: coords } }];
 }
 
+const OVERLAY_SOURCES = ["route", "zone", "lanes", "trace", "cut"];
+
+function ensureOverlay() {
+  if (!map.isStyleLoaded()) return false;
+  OVERLAY_SOURCES.forEach((name) => {
+    if (!map.getSource(name)) map.addSource(name, emptyGeojson());
+  });
+  if (!map.getLayer("route-layer")) {
+    map.addLayer({ id: "route-layer", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#16a34a", "line-width": 3.5, "line-opacity": 0.9 } });
+  }
+  if (!map.getLayer("zone-fill")) {
+    map.addLayer({ id: "zone-fill", type: "fill", source: "zone", paint: { "fill-color": "#e11d48", "fill-opacity": 0.18 } });
+    map.addLayer({ id: "zone-line", type: "line", source: "zone", paint: { "line-color": "#e11d48", "line-width": 1.5, "line-dasharray": [2, 1.5], "line-opacity": 0.85 } });
+  }
+  if (!map.getLayer("lane-layer")) {
+    map.addLayer({ id: "lane-layer", type: "line", source: "lanes", layout: { "line-cap": "round" }, paint: { "line-color": "#0ea5e9", "line-width": 2, "line-dasharray": [1, 2.5], "line-opacity": 0.9 } });
+  }
+  if (!map.getLayer("trace-line")) {
+    map.addLayer({ id: "trace-line", type: "line", source: "trace", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#d97706", "line-width": 3, "line-opacity": 0.9 } });
+  }
+  if (!map.getLayer("cut-line")) {
+    map.addLayer({ id: "cut-line", type: "line", source: "cut", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#e11d48", "line-width": 6, "line-opacity": 0.95 } });
+  }
+  return true;
+}
+
 function setSource(name, features) {
   if (map.getSource(name)) {
     map.getSource(name).setData({ type: "FeatureCollection", features });
   }
 }
 
-function ensureSources() {
-  ["route", "zone", "lanes", "trace", "cut"].forEach((name) => {
-    if (!map.getSource(name)) map.addSource(name, emptyGeojson());
-  });
-}
-
 function clearGeo() {
-  ["route", "zone", "lanes", "trace", "cut"].forEach((name) => {
+  OVERLAY_SOURCES.forEach((name) => {
     if (map.getSource(name)) map.getSource(name).setData(emptyGeojson());
   });
 }
@@ -77,6 +75,17 @@ async function fetchJson(url, body) {
   return res.json();
 }
 
+function ready() {
+  return new Promise((resolve) => {
+    if (map.isStyleLoaded()) return resolve();
+    map.on("load", () => {
+      ensureOverlay();
+      resolve();
+    });
+    setTimeout(resolve, 8000); // never hang the UI on style loading
+  });
+}
+
 function initUi() {
   const traceSel = document.getElementById("trace");
   fetchJson("/api/fixtures").then((fx) => {
@@ -88,7 +97,7 @@ function initUi() {
       traceSel.appendChild(o);
     });
     showHint();
-    audit();
+    ready().then(audit);
   });
 }
 
@@ -105,13 +114,15 @@ async function audit() {
   const route = Object.keys(state.fixtures.routes)[0];
 
   clearGeo();
+  await ready();
+  if (!ensureOverlay()) return;
+
   const [zoneData, routeData, laneNames] = await Promise.all([
     fetchJson("/api/zone/" + zones[0]),
     fetchJson("/api/route/" + route),
     Promise.resolve(state.fixtures.lanes),
   ]);
 
-  ensureSources();
   setSource("zone", [{ type: "Feature", geometry: { type: "Polygon", coordinates: [zoneData.ring.map((p) => [p.lon, p.lat])] } }]);
   setSource("route", lineFeatures(routeData.points.map((p) => [p.lon, p.lat])));
 
@@ -134,14 +145,10 @@ async function audit() {
 }
 
 function fitJunction(coords) {
-  if (coords.length === 0) return map.jumpTo({ center: JUNCTION, zoom: 16 });
+  if (!coords.length) return map.jumpTo({ center: JUNCTION, zoom: 16 });
   const bounds = new maplibregl.LngLatBounds();
   coords.forEach((c) => bounds.extend(c));
   map.fitBounds(bounds, { padding: 60, maxZoom: 17 });
-}
-
-function clearLayers() {
-  clearGeo();
 }
 
 function renderVerdict(res) {
@@ -243,7 +250,7 @@ function stopPlayback() {
 function play() {
   if (!state.current || !state.current.points || state.current.points.length < 2) return;
   stopPlayback();
-  ensureSources();
+  ensureOverlay();
   state.playing = true;
 
   const pts = state.current.points;
@@ -297,6 +304,6 @@ window.review = review;
 window.play = play;
 
 map.on("load", () => {
-  ensureSources();
+  ensureOverlay();
   document.getElementById("coord-readout").textContent = "22.3228°N 73.2550°E";
 });

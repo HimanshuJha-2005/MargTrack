@@ -57,10 +57,11 @@ def main() -> None:
         print(f"cut segment:  points [{event.seg_start}..{event.seg_end}] of {len(trace.points)}")
     if event.metrics:
         m = event.metrics
-        print(
-            f"evidence:     trace {m['trace_len_m']}m vs legal {m['route_len_m']}m | "
-            f"shortcut x{m['shortcut_factor']} | bearing delta {m['bearing_delta_deg']}deg"
-        )
+        if "trace_len_m" in m:
+            print(
+                f"evidence:     trace {m['trace_len_m']}m vs legal {m['route_len_m']}m | "
+                f"shortcut x{m['shortcut_factor']} | bearing delta {m['bearing_delta_deg']}deg"
+            )
 
 
 if __name__ == "__main__":

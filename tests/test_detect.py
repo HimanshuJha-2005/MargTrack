@@ -59,6 +59,27 @@ class DetectTests(unittest.TestCase):
         event = audit_trace(trace, route_lats, route_lons, zones())
         self.assertEqual(event.verdict.value, "AMBIGUOUS")
 
+    def test_zone_dip_without_route_anchors_is_ambiguous(self):
+        # Deep inside the zone but never touching the legal route on either side:
+        # a floating GPS path, so NOT an auto-flagged violation.
+        legal = load(os.path.join(TRACES, "clean_legal.json"))
+        route_lats = [p.lat for p in legal.points]
+        route_lons = [p.lon for p in legal.points]
+        trace = load(os.path.join(TRACES, "zone_dip_unanchored.json"))
+        event = audit_trace(trace, route_lats, route_lons, zones())
+        self.assertEqual(event.verdict.value, "AMBIGUOUS")
+        self.assertEqual(event.state.value, "PENDING_REVIEW")
+
+    def test_zone_teleport_speed_is_ambiguous(self):
+        # Same geometry as the real cut but with GPS-blip hop speed: noise, not a rider.
+        legal = load(os.path.join(TRACES, "clean_legal.json"))
+        route_lats = [p.lat for p in legal.points]
+        route_lons = [p.lon for p in legal.points]
+        trace = load(os.path.join(TRACES, "zone_teleport.json"))
+        event = audit_trace(trace, route_lats, route_lons, zones())
+        self.assertEqual(event.verdict.value, "AMBIGUOUS")
+        self.assertEqual(event.state.value, "PENDING_REVIEW")
+
 
 if __name__ == "__main__":
     unittest.main()

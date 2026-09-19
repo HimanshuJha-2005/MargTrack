@@ -2,6 +2,7 @@
 
 from .geometry import (
     angular_delta,
+    haversine_m,
     initial_bearing_deg,
     nearest_route_index,
     path_length_m,
@@ -10,6 +11,8 @@ from .geometry import (
     polyline_subpath_m,
 )
 from .types import DetectedEvent, EventState, Trace, Verdict
+
+MAX_PLAUSIBLE_SPEED_MS = 55.0  # ~200 km/h: above this a hop is GPS noise, not movement
 
 
 def distance_to_route_m(lat, lon, route_lats, route_lons) -> float:
@@ -83,6 +86,45 @@ def _auto_confirms(metrics: dict) -> bool:
     return metrics.get("shortcut_factor", 0) >= 1.5 and metrics.get("bearing_delta_deg", 0) >= 120
 
 
+def _hops_are_plausible(points) -> bool:
+    """True if no hop between consecutive trace points implies an impossible speed.
+
+    A 200+ km/h jump means bad GPS fixes (teleporting blips), not real movement.
+    Skips pairs without usable timestamps rather than blaming the rider.
+    """
+    for a, b in zip(points, points[1:]):
+        dt = b.t - a.t
+        if dt <= 0:
+            continue
+        dist = haversine_m(a.lat, a.lon, b.lat, b.lon)
+        if dist / dt > MAX_PLAUSIBLE_SPEED_MS:
+            return False
+    return True
+
+
+def _anchored_to_route(trace: Trace, run: list[int], route_lats, route_lons, anchor_m: float) -> tuple[bool, list[str]]:
+    """A real shortcut leaves the legal route and REJOINS it: the neighbour
+    points right before/after the in-zone run should sit on the corridor.
+
+    A floating GPS dip (never near the route on either side) fails this and is
+    treated as noise, not a cut. Returns (ok, problems).
+    """
+    seg_start, seg_end = run[0], run[-1]
+    problems: list[str] = []
+    if seg_start <= 0 or seg_end >= len(trace.points) - 1:
+        return False, ["run reaches the trace edge: missing entry/exit anchor"]
+
+    before = trace.points[seg_start - 1]
+    after = trace.points[seg_end + 1]
+    db = distance_to_route_m(before.lat, before.lon, route_lats, route_lons)
+    da = distance_to_route_m(after.lat, after.lon, route_lats, route_lons)
+    if db > anchor_m:
+        problems.append(f"entry anchor {db:.0f}m off route")
+    if da > anchor_m:
+        problems.append(f"exit anchor {da:.0f}m off route")
+    return not problems, problems
+
+
 def audit_trace(
     trace: Trace,
     route_lats,
@@ -90,6 +132,7 @@ def audit_trace(
     zones,
     off_route_m: float = 40.0,
     min_deep_points: int = 3,
+    anchor_m: float = 60.0,
 ) -> DetectedEvent:
     """Verdict for one trace against the legal route and forbidden-zone polygons."""
     if len(trace.points) < 2:
@@ -110,6 +153,34 @@ def audit_trace(
     if len(deep_points) >= min_deep_points:
         run = max(_contiguous_runs(deep_points), key=len)
         seg_start, seg_end = run[0], run[-1]
+
+        # Guard 1: impossible hop speeds mean bad GPS fixes, not movement.
+        if not _hops_are_plausible(trace.points[seg_start : seg_end + 1]):
+            return DetectedEvent(
+                verdict=Verdict.AMBIGUOUS,
+                reason=f"points [{seg_start}..{seg_end}] in forbidden zone but hop speeds are "
+                "physically impossible (>200km/h) - GPS noise suspected",
+                seg_start=seg_start,
+                seg_end=seg_end,
+                severity="HIGH",
+                state=EventState.PENDING_REVIEW,
+                metrics={"_hops_are_plausible": False},
+            )
+
+        # Guard 2: a real shortcut leaves and REJOINS the legal route.
+        anchored, anchor_problems = _anchored_to_route(trace, run, route_lats, route_lons, anchor_m)
+        if route_lats and not anchored:
+            return DetectedEvent(
+                verdict=Verdict.AMBIGUOUS,
+                reason=f"points [{seg_start}..{seg_end}] in forbidden zone but trace does not "
+                "rejoin the legal route: " + ", ".join(anchor_problems),
+                seg_start=seg_start,
+                seg_end=seg_end,
+                severity="HIGH",
+                state=EventState.PENDING_REVIEW,
+                metrics={"_anchored": False, "anchor_problems": anchor_problems},
+            )
+
         metrics = _run_metrics(trace, run, route_lats, route_lons)
         reason = f"cut through forbidden zone over points [{seg_start}..{seg_end}]"
         if metrics:

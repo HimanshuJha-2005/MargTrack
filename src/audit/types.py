@@ -37,3 +37,4 @@ class DetectedEvent:
     seg_end: int = -1
     severity: str = "LOW"  # LOW | MEDIUM | HIGH
     state: EventState = EventState.PENDING_REVIEW
+    metrics: dict = field(default_factory=dict)  # evidence: lengths, factors, bearings

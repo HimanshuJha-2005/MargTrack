@@ -1,4 +1,4 @@
-# ride-audit
+# MargTrack
 
 GPS-trace ride audit: an embedded compliance layer that detects traffic-rule
 violations (illegal cuts, wrong-side driving) from a ride's GPS trace, demerits
@@ -13,7 +13,7 @@ deployable live stack (Ship It).
 Gig-ride drivers under time pressure routinely cut no-U-turn zones and drive
 wrong-side to shave minutes. Existing tools audit *other* cars from a camera,
 for police or fleet owners. Nobody hands the ride platform an independent,
-auditable, GPS-derived check of each trip. That gap is this project.
+auditable, GPS-derived check of each trip. That gap is MargTrack.
 
 ## Pipeline
 

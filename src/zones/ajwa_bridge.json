@@ -1,11 +1,11 @@
 {
-  "name": "ajwa_bridge_generic",
-  "description": "Placeholder zone for the under-bridge wrong-side cut near Ajwa Road Bridge. Replace ring coordinates with real ones from a GPS-tagged map after recording the actual trace.",
-  "legal_hint": "legal path crosses the bridge deck, U-turns at the far side, returns",
+  "name": "ajwa_bridge_zone",
+  "description": "Forbidden under-bridge strip: the shortcut lane that lets drivers skip the legal bridge loop. Synthetic geometry; replace with real GPS-tagged coordinates when a real trace is recorded.",
+  "legal_hint": "legal path crosses on the bridge deck far above (the Pi loop), the strip below is where the shortcut happens",
   "ring": [
-    {"lat": 22.34200, "lon": 73.15100},
-    {"lat": 22.34150, "lon": 73.15250},
-    {"lat": 22.34200, "lon": 73.15300},
-    {"lat": 22.34250, "lon": 73.15150}
+    {"lat": 22.34090, "lon": 73.15050},
+    {"lat": 22.34170, "lon": 73.15050},
+    {"lat": 22.34170, "lon": 73.15350},
+    {"lat": 22.34090, "lon": 73.15350}
   ]
 }

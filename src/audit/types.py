@@ -10,6 +10,11 @@ class Verdict(str, Enum):
     AMBIGUOUS = "AMBIGUOUS"
 
 
+class ViolationType(str, Enum):
+    ZONE_CUT = "ZONE_CUT"
+    WRONG_WAY = "WRONG_WAY"
+
+
 class EventState(str, Enum):
     PENDING_REVIEW = "PENDING_REVIEW"
     CONFIRMED = "CONFIRMED"
@@ -38,3 +43,4 @@ class DetectedEvent:
     severity: str = "LOW"  # LOW | MEDIUM | HIGH
     state: EventState = EventState.PENDING_REVIEW
     metrics: dict = field(default_factory=dict)  # evidence: lengths, factors, bearings
+    violation_type: str = ""  # "" | ViolationType name (ZONE_CUT | WRONG_WAY)

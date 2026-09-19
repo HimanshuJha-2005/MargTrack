@@ -1,11 +1,38 @@
 {
-  "name": "ajwa_bridge_zone",
-  "description": "Forbidden under-bridge strip: the shortcut lane that lets drivers skip the legal bridge loop. Synthetic geometry; replace with real GPS-tagged coordinates when a real trace is recorded.",
-  "legal_hint": "legal path crosses on the bridge deck far above (the Pi loop), the strip below is where the shortcut happens",
+  "name": "ajwa_flyover_junction",
+  "description": "Forbidden under-flyover service road linking the two one-way Ajwa Road carriageways at the NH48 flyover, Vadodara. Drawn from the real OpenStreetMap service-way geometry.",
   "ring": [
-    {"lat": 22.34090, "lon": 73.15050},
-    {"lat": 22.34170, "lon": 73.15050},
-    {"lat": 22.34170, "lon": 73.15350},
-    {"lat": 22.34090, "lon": 73.15350}
+    {
+      "lat": 22.322871,
+      "lon": 73.254381
+    },
+    {
+      "lat": 22.322933,
+      "lon": 73.254498
+    },
+    {
+      "lat": 22.322995,
+      "lon": 73.254615
+    },
+    {
+      "lat": 22.323052,
+      "lon": 73.254924
+    },
+    {
+      "lat": 22.322852,
+      "lon": 73.25512400000001
+    },
+    {
+      "lat": 22.322795,
+      "lon": 73.25481500000001
+    },
+    {
+      "lat": 22.322733,
+      "lon": 73.254698
+    },
+    {
+      "lat": 22.322671,
+      "lon": 73.254581
+    }
   ]
 }

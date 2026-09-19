@@ -32,6 +32,9 @@ def main() -> None:
     parser.add_argument("--trace", required=True, help="path to trace JSON")
     parser.add_argument("--zone", nargs="*", default=[], help="zone JSON file(s)")
     parser.add_argument("--route", default=None, help="optional legal-route trace JSON")
+    parser.add_argument(
+        "--lanes", nargs="*", default=[], help="one-way lane JSON file(s) with authorized directions"
+    )
     args = parser.parse_args()
 
     trace = load_trace(args.trace)
@@ -47,12 +50,19 @@ def main() -> None:
         route_lats = [p.lat for p in route.points]
         route_lons = [p.lon for p in route.points]
 
-    event = audit_trace(trace, route_lats, route_lons, zones)
+    lanes = []
+    for lpath in args.lanes:
+        with open(lpath, encoding="utf-8") as f:
+            lanes.append(json.load(f))
+
+    event = audit_trace(trace, route_lats, route_lons, zones, one_way_lanes=lanes)
 
     print(f"verdict:      {event.verdict.value}")
     print(f"reason:       {event.reason}")
     print(f"state:        {event.state.value}")
     print(f"severity:     {event.severity}")
+    if event.violation_type:
+        print(f"violation:    {event.violation_type}")
     if event.seg_start >= 0 and event.seg_end >= 0:
         print(f"cut segment:  points [{event.seg_start}..{event.seg_end}] of {len(trace.points)}")
     if event.metrics:

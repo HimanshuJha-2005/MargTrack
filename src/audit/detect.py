@@ -10,9 +10,11 @@ from .geometry import (
     point_segment_distance_m,
     polyline_subpath_m,
 )
-from .types import DetectedEvent, EventState, Trace, Verdict
+from .types import DetectedEvent, EventState, Trace, Verdict, ViolationType
 
 MAX_PLAUSIBLE_SPEED_MS = 55.0  # ~200 km/h: above this a hop is GPS noise, not movement
+WRONG_WAY_DELTA_DEG = 120.0  # bearings this far from legal direction => driving against one-way
+MIN_ON_CORRIDOR_FRAC = 0.7  # share of trace points that must hug the route for a corridor verdict
 
 
 def distance_to_route_m(lat, lon, route_lats, route_lons) -> float:
@@ -81,8 +83,15 @@ def _severity(metrics: dict) -> str:
     return "MEDIUM"
 
 
-def _auto_confirms(metrics: dict) -> bool:
-    """Tier-2 auto-confirm: BOTH strongly provable (shortcut >= 1.5 AND wrong-way >= 120deg)."""
+def _auto_confirms(metrics: dict, violation_type) -> bool:
+    """Tier-2 auto-confirm rule, per violation type.
+
+    - ZONE_CUT: shortcut must be HUGE (x1.5) AND heading change severe (>=120 deg).
+    - WRONG_WAY: bearing delta >=160 deg is unambiguously reversed travel.
+    Everything else stays PENDING_REVIEW so the operator (or Tier-3 agent) decides.
+    """
+    if violation_type == ViolationType.WRONG_WAY:
+        return metrics.get("bearing_delta_deg", 0) >= 160
     return metrics.get("shortcut_factor", 0) >= 1.5 and metrics.get("bearing_delta_deg", 0) >= 120
 
 
@@ -133,8 +142,15 @@ def audit_trace(
     off_route_m: float = 40.0,
     min_deep_points: int = 3,
     anchor_m: float = 60.0,
+    one_way_lanes: list | None = None,
 ) -> DetectedEvent:
-    """Verdict for one trace against the legal route and forbidden-zone polygons."""
+    """Verdict for one trace against the legal route and forbidden-zone polygons.
+
+    one_way_lanes: list of dicts {"points":[{"lat","lon"}], "name": str}.
+      Each is a legal carriageway whose authorized direction is its point order
+      (first -> last). A trace hugging that lane but moving the other way is
+      a WRONG_WAY violation regardless of the forbidden zones.
+    """
     if len(trace.points) < 2:
         return DetectedEvent(verdict=Verdict.CLEAN, reason="trace too short")
 
@@ -196,16 +212,66 @@ def audit_trace(
             seg_end=seg_end,
             severity=_severity(metrics),
             state=(
-                EventState.CONFIRMED if _auto_confirms(metrics) else EventState.PENDING_REVIEW
+                EventState.CONFIRMED
+                if _auto_confirms(metrics, ViolationType.ZONE_CUT)
+                else EventState.PENDING_REVIEW
             ),
             metrics=metrics,
+            violation_type=ViolationType.ZONE_CUT,
         )
+
+    # Not deep in a zone: WRONG_WAY check against explicitly listed one-way lanes.
+    if one_way_lanes:
+        wrong = _wrong_way_via_lanes(trace, one_way_lanes, off_route_m)
+        if wrong:
+            return wrong
+
+    # Not deep in a zone, no one-way lanes: fall back to a single directional route.
+    if route_lats and len(route_lats) > 1:
+        route_bearing = initial_bearing_deg(
+            route_lats[0], route_lons[0], route_lats[-1], route_lons[-1]
+        )
+        trace_bearing = initial_bearing_deg(
+            trace.points[0].lat, trace.points[0].lon,
+            trace.points[-1].lat, trace.points[-1].lon,
+        )
+        delta = angular_delta(route_bearing, trace_bearing)
+
+        on_corridor = sum(
+            1 for p in trace.points if distance_to_route_m(p.lat, p.lon, route_lats, route_lons) <= off_route_m
+        ) / len(trace.points)
+
+        if on_corridor >= MIN_ON_CORRIDOR_FRAC and delta >= WRONG_WAY_DELTA_DEG:
+            return DetectedEvent(
+                verdict=Verdict.VIOLATION,
+                reason=(
+                    f"driving the legal corridor in the wrong direction "
+                    f"({delta:.0f}deg against one-way route, {on_corridor:.0%} of points on corridor)"
+                ),
+                severity="HIGH",
+                state=(
+                    EventState.CONFIRMED
+                    if _auto_confirms({"bearing_delta_deg": delta}, ViolationType.WRONG_WAY)
+                    else EventState.PENDING_REVIEW
+                ),
+                metrics={"route_bearing": round(route_bearing, 1), "trace_bearing": round(trace_bearing, 1), "bearing_delta_deg": round(delta, 1)},
+                violation_type=ViolationType.WRONG_WAY,
+            )
 
     # Not deep in a zone, but floating far off the legal path -> ambiguous, review it.
     if route_lats:
         off_count = 0
         for p in trace.points:
-            if distance_to_route_m(p.lat, p.lon, route_lats, route_lons) > off_route_m:
+            near_any_lane = False
+            if one_way_lanes:
+                for ln in one_way_lanes:
+                    lats = [q["lat"] for q in ln["points"]]
+                    lons = [q["lon"] for q in ln["points"]]
+                    if distance_to_route_m(p.lat, p.lon, lats, lons) <= off_route_m:
+                        near_any_lane = True
+                        break
+            near_route = distance_to_route_m(p.lat, p.lon, route_lats, route_lons) <= off_route_m
+            if not (near_route or near_any_lane):
                 off_count += 1
         if off_count >= max(2, len(trace.points) // 5):
             return DetectedEvent(
@@ -218,4 +284,65 @@ def audit_trace(
         verdict=Verdict.CLEAN,
         reason="trace follows legal corridor",
         state=EventState.CONFIRMED,
+    )
+
+
+def _wrong_way_via_lanes(trace: Trace, lanes, off_route_m: float) -> DetectedEvent | None:
+    """WRONG_WAY verdict if the trace hugs a one-way lane but moves against it.
+
+    Each lane is {"points", "name"}: its authorized direction is first->last.
+    Every trace point is matched to its nearest lane; if the trace is
+    predominantly on one lane yet its overall bearing opposes the lane's
+    authorized bearing by >=120 deg, that is driving the wrong way.
+    """
+    if not lanes:
+        return None
+    all_lats = {id(ln): [p["lat"] for p in ln["points"]] for ln in lanes}
+    all_lons = {id(ln): [p["lon"] for p in ln["points"]] for ln in lanes}
+    lane_names = {id(ln): ln.get("name", "") for ln in lanes}
+
+    best_lane, best_frac = None, 0.0
+    for ln in lanes:
+        lats = all_lats[id(ln)]
+        lons = all_lons[id(ln)]
+        on = sum(
+            1 for p in trace.points
+            if distance_to_route_m(p.lat, p.lon, lats, lons) <= off_route_m
+        ) / len(trace.points)
+        if on > best_frac:
+            best_frac, best_lane = on, ln
+    if best_frac < MIN_ON_CORRIDOR_FRAC:
+        return None
+
+    lane_bearing = initial_bearing_deg(
+        best_lane["points"][0]["lat"], best_lane["points"][0]["lon"],
+        best_lane["points"][-1]["lat"], best_lane["points"][-1]["lon"],
+    )
+    trace_bearing = initial_bearing_deg(
+        trace.points[0].lat, trace.points[0].lon,
+        trace.points[-1].lat, trace.points[-1].lon,
+    )
+    delta = angular_delta(lane_bearing, trace_bearing)
+    if delta < WRONG_WAY_DELTA_DEG:
+        return None
+
+    return DetectedEvent(
+        verdict=Verdict.VIOLATION,
+        reason=(
+            f"driving lane '{lane_names[id(best_lane)]}' in the wrong direction "
+            f"({delta:.0f}deg against one-way, {best_frac:.0%} of points on lane)"
+        ),
+        severity="HIGH",
+        state=(
+            EventState.CONFIRMED
+            if _auto_confirms({"bearing_delta_deg": delta}, ViolationType.WRONG_WAY)
+            else EventState.PENDING_REVIEW
+        ),
+        metrics={
+            "lane": lane_names[id(best_lane)],
+            "lane_bearing": round(lane_bearing, 1),
+            "trace_bearing": round(trace_bearing, 1),
+            "bearing_delta_deg": round(delta, 1),
+        },
+        violation_type=ViolationType.WRONG_WAY,
     )

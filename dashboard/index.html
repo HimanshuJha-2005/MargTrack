@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>MargTrack — Ride Audit</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<header>
+  <div class="brand">Marg<span>Track</span></div>
+  <div class="tagline">GPS ride audit · legal route vs forbidden zones</div>
+</header>
+
+<main>
+  <div id="map"></div>
+
+  <aside class="panel">
+    <section class="controls">
+      <label>Trace
+        <select id="trace"></select>
+      </label>
+      <label>Forbidden zone
+        <select id="zone"></select>
+      </label>
+      <label>Legal route
+        <select id="route"></select>
+      </label>
+      <div class="row">
+        <button onclick="audit()">Run audit</button>
+        <button onclick="play()">Replay trace</button>
+      </div>
+    </section>
+
+    <section class="verdict-card">
+      <div class="verdict-row">
+        <span id="verdict" class="badge">—</span>
+        <span>state: <strong id="state">—</strong> · severity: <strong id="severity">—</strong></span>
+      </div>
+      <p id="reason">Select a trace and run the audit.</p>
+      <div id="metrics"></div>
+
+      <button id="review-btn" onclick="review()" disabled>Tier-3 agent review</button>
+      <p id="review-outcome" class="review-outcome"></p>
+    </section>
+
+    <footer class="legend">
+      <div><i class="sw leg"></i> legal route</div>
+      <div><i class="sw zone"></i> forbidden zone</div>
+      <div><i class="sw trace"></i> GPS trace</div>
+      <div><i class="sw cut"></i> flagged cut</div>
+    </footer>
+  </aside>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

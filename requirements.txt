@@ -1,0 +1,2 @@
+strands-agents>=1.56
+ollama>=0.4

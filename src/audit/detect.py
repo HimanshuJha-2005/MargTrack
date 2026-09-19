@@ -78,6 +78,11 @@ def _severity(metrics: dict) -> str:
     return "MEDIUM"
 
 
+def _auto_confirms(metrics: dict) -> bool:
+    """Tier-2 auto-confirm: BOTH strongly provable (shortcut >= 1.5 AND wrong-way >= 120deg)."""
+    return metrics.get("shortcut_factor", 0) >= 1.5 and metrics.get("bearing_delta_deg", 0) >= 120
+
+
 def audit_trace(
     trace: Trace,
     route_lats,
@@ -119,7 +124,9 @@ def audit_trace(
             seg_start=seg_start,
             seg_end=seg_end,
             severity=_severity(metrics),
-            state=EventState.PENDING_REVIEW,
+            state=(
+                EventState.CONFIRMED if _auto_confirms(metrics) else EventState.PENDING_REVIEW
+            ),
             metrics=metrics,
         )
 

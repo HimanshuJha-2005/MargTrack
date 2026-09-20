@@ -1,2 +1,3 @@
 strands-agents>=1.56
 ollama>=0.4
+cedarpy>=4.12

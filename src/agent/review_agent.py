@@ -22,6 +22,17 @@ from strands.models.ollama import OllamaModel
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
+BEDROCK_MODEL = os.environ.get("BEDROCK_MODEL", "amazon.nova-micro-v1:0")
+
+
+def make_model():
+    """Model-agnostic Strands backend: local Ollama (zero-cost default) or
+    Amazon Bedrock when USE_BEDROCK=1 and credentials are configured."""
+    if os.environ.get("USE_BEDROCK") == "1":
+        from strands.models.bedrock import BedrockModel
+
+        return BedrockModel(model_id=BEDROCK_MODEL, temperature=0.1, max_tokens=512)
+    return OllamaModel(OLLAMA_HOST, model_id=OLLAMA_MODEL, temperature=0.1, max_tokens=512)
 
 
 def build_review_agent(evidence: dict):
@@ -75,12 +86,7 @@ def build_review_agent(evidence: dict):
         return "\n".join(lines)
 
     agent = Agent(
-        model=OllamaModel(
-            OLLAMA_HOST,
-            model_id=OLLAMA_MODEL,
-            temperature=0.1,
-            max_tokens=512,
-        ),
+        model=make_model(),
         tools=[dist_to_route_m, in_any_zone, cut_profile],
         system_prompt=(
             "You are a strict but fair GPS ride auditor. A human rideshare supervisor will "

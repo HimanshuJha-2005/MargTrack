@@ -1,38 +1,22 @@
 {
-  "name": "ajwa_flyover_junction",
-  "description": "Forbidden under-flyover service road linking the two one-way Ajwa Road carriageways at the NH48 flyover, Vadodara. Drawn from the real OpenStreetMap service-way geometry.",
+  "name": "ajwa_flyover_underpass",
+  "description": "Forbidden under-deck wedge (Ajwa Road at-grade crossing checked out): where the origin-story rider cuts under the NH48 flyover deck, north of the Ajwa Road at-grade lane. Drawn from live OSM trunk geometry (ways 1316342272/1316342273).",
   "ring": [
     {
-      "lat": 22.322871,
-      "lon": 73.254381
+      "lat": 22.3237,
+      "lon": 73.25523
     },
     {
-      "lat": 22.322933,
-      "lon": 73.254498
+      "lat": 22.3237,
+      "lon": 73.25544
     },
     {
-      "lat": 22.322995,
-      "lon": 73.254615
+      "lat": 22.32405,
+      "lon": 73.25539
     },
     {
-      "lat": 22.323052,
-      "lon": 73.254924
-    },
-    {
-      "lat": 22.322852,
-      "lon": 73.25512400000001
-    },
-    {
-      "lat": 22.322795,
-      "lon": 73.25481500000001
-    },
-    {
-      "lat": 22.322733,
-      "lon": 73.254698
-    },
-    {
-      "lat": 22.322671,
-      "lon": 73.254581
+      "lat": 22.32405,
+      "lon": 73.25523
     }
   ]
 }

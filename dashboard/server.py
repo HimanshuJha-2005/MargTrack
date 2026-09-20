@@ -4,6 +4,8 @@ Serves the MapLibre GL UI and the same JSON API contract the AWS deployment
 will expose via API Gateway:
 
     GET  /                    -> dashboard/index.html
+    GET  /vendor/<file>       -> locally-vendored MapLibre GL
+    GET  /tiles/<z>/<x>/<y>.png -> proxied raster basemap tiles (same-origin)
     GET  /api/fixtures        -> available traces / zones / routes / lanes
     GET  /api/trace/<name>    -> raw trace fixture
     GET  /api/route/<name>    -> raw legal-route fixture
@@ -18,7 +20,10 @@ Then: open http://localhost:8000
 
 import json
 import os
+import re
 import sys
+import urllib.request
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -35,22 +40,76 @@ TRACES = {
     "ambiguous_gps_drift": os.path.join(REPO, "src", "traces", "ambiguous_gps_drift.json"),
 }
 ZONES = {"ajwa_junction": os.path.join(REPO, "src", "zones", "ajwa_bridge.json")}
-ROUTES = {"ajwa_route": os.path.join(REPO, "src", "zones", "ajwa_route.json")}
+ROUTES = {
+    "ajwa_route": os.path.join(REPO, "src", "zones", "ajwa_route.json"),
+    "maps_fair_route": os.path.join(REPO, "src", "zones", "maps_fair_route.json"),
+    "wrong_way_route": os.path.join(REPO, "src", "zones", "wrong_way_route.json"),
+}
+# The comparisons the demo cares about: which legal route (green line on the
+# map) each trace is audited against. The SHORTCUT green line is the ~430m
+# maps-fair loop; the WRONG_WAY green line is what the driver should have
+# followed (straight north, then left).
+TRACE_ROUTES = {
+    "clean_legal": "ajwa_route",
+    "wrong_way": "wrong_way_route",
+    "illegal_shortcut": "maps_fair_route",
+    "ambiguous_gps_drift": "ajwa_route",
+}
 LANES = {
     "ajwa_carriageway_NE": os.path.join(REPO, "src", "zones", "lane_0.json"),
     "ajwa_carriageway_SW": os.path.join(REPO, "src", "zones", "lane_1.json"),
 }
 
 LABELS = {
-    "clean_legal": "Clean — legal ride (NE carriageway)",
-    "wrong_way": "Wrong-way — riding the one-way NE carriageway backwards",
-    "illegal_shortcut": "Shortcut — cutting through the under-flyover service road",
-    "ambiguous_gps_drift": "Ambiguous — GPS drifts hard off the road",
-    "ajwa_junction": "Forbidden under-flyover junction box (real OSM)",
-    "ajwa_route": "Legal route — Ajwa Rd NE carriageway",
+    "clean_legal": "Clean — legal ride (west bypass carriageway)",
+    "wrong_way": "Wrong-way — riding the one-way west bypass carriageway backwards",
+    "illegal_shortcut": "Shortcut — wrong-way ride cut under the flyover (22.322702, 73.255615 → 22.324924, 73.254964)",
+    "ambiguous_gps_drift": "Ambiguous — subtle GPS drift off the road",
+    "ajwa_junction": "Forbidden under-flyover wedge (Ajwa Rd at-grade crossing excluded)",
+    "ajwa_route": "Legal route — west bypass carriageway (strict, S→N)",
+    "maps_fair_route": "Legal route shown in the SHORTCUT scenario — ~430m loop on real roads (connectors + Ajwa Rd at-grade, no one-way violation)",
+    "wrong_way_route": "Legal route shown in the WRONG_WAY scenario — what the driver should have followed (straight north, then left)",
 }
 
 TRACE_ORDER = ["clean_legal", "wrong_way", "illegal_shortcut", "ambiguous_gps_drift"]
+
+TILE_RE = re.compile(r"^/tiles/(\d+)/(\d+)/(\d+)\.png$")
+
+TILE_CACHE = OrderedDict()
+TILE_CACHE_LIMIT = 600
+TILE_UPSTREAMS = (
+    "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+)
+TILE_HEADERS = {"User-Agent": "MargTrackDashboard/1.0 (hackathon demo)"}
+
+
+def proxy_tile(z, x, y):
+    key = f"{z}/{x}/{y}"
+    if key in TILE_CACHE:
+        TILE_CACHE.move_to_end(key)
+        return TILE_CACHE[key]
+    if len(TILE_CACHE) >= TILE_CACHE_LIMIT:
+        TILE_CACHE.popitem(last=False)
+    body = None
+    for upstream in TILE_UPSTREAMS:
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(upstream.format(z=z, x=x, y=y), headers=TILE_HEADERS),
+                timeout=20,
+            ) as resp:
+                status = getattr(resp, "status", 200)
+                if status != 200:
+                    continue
+                body = resp.read()
+                break
+        except Exception:
+            continue
+    if body is None:
+        return None
+    TILE_CACHE[key] = body
+    return body
 
 
 def load_trace(path: str) -> Trace:
@@ -81,8 +140,9 @@ def run_engine(body: dict) -> dict:
     zones = zone_data(body.get("zones", ["ajwa_junction"]))
     lanes = one_way_lanes(body.get("lanes"))
     rl, rn = [], []
-    if body.get("route"):
-        rl, rn = route_latlons(body["route"])
+    route = body.get("route") or TRACE_ROUTES.get(body["trace"])
+    if route:
+        rl, rn = route_latlons(route)
 
     event = audit_trace(trace, rl, rn, zones, one_way_lanes=lanes)
     cut = []
@@ -131,6 +191,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_file(os.path.join(ROOT, "app.js"), "application/javascript")
         if self.path == "/style.css":
             return self._serve_file(os.path.join(ROOT, "style.css"), "text/css")
+        if self.path.startswith("/vendor/"):
+            return self._serve_file(os.path.join(ROOT, self.path.lstrip("/")), {
+                ".js": "application/javascript",
+                ".css": "text/css",
+            }.get(os.path.splitext(self.path)[1], "application/octet-stream"))
+        tile_match = TILE_RE.match(self.path)
+        if tile_match:
+            z, x, y = (int(g) for g in tile_match.groups())
+            body = proxy_tile(z, x, y)
+            if body is None:
+                return self._send(502, {"error": "upstream tile unreachable"})
+            return self._send(200, body, "image/png")
         if self.path.startswith("/api/trace/"):
             return self._send_fixture(TRACES, self.path.rsplit("/", 1)[1])
         if self.path.startswith("/api/zone/"):
@@ -143,6 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {
                 "traces": TRACE_ORDER,
                 "trace_labels": {k: LABELS.get(k, k) for k in TRACE_ORDER},
+                "trace_routes": TRACE_ROUTES,
                 "zones": list(ZONES),
                 "routes": list(ROUTES),
                 "lanes": list(LANES),
@@ -170,8 +243,9 @@ class Handler(BaseHTTPRequestHandler):
                 zones = zone_data(body.get("zones", ["ajwa_junction"]))
                 lanes = one_way_lanes(body.get("lanes"))
                 rl, rn = [], []
-                if body.get("route"):
-                    rl, rn = route_latlons(body["route"])
+                route = body.get("route") or TRACE_ROUTES.get(body["trace"])
+                if route:
+                    rl, rn = route_latlons(route)
                 return self._send(200, review_event(trace, rl, rn, zones, one_way_lanes=lanes))
             self._send(404, {"error": "unknown endpoint"})
         except KeyError as exc:

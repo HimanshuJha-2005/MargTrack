@@ -15,3 +15,4 @@ samconfig.toml
 *.log
 .DS_Store
 Thumbs.db
+dashboard/server.log.*

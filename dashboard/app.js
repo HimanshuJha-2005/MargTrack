@@ -14,11 +14,7 @@ const map = new maplibregl.Map({
     sources: {
       basemap: {
         type: "raster",
-        tiles: [
-          "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        ],
+        tiles: ["/tiles/{z}/{x}/{y}.png"],
         tileSize: 256,
         maxzoom: 19,
         attribution:
@@ -36,6 +32,10 @@ function emptyGeojson() {
   return { type: "FeatureCollection", features: [] };
 }
 
+function geojsonSource() {
+  return { type: "geojson", data: emptyGeojson() };
+}
+
 function lineFeatures(coords) {
   return [{ type: "Feature", geometry: { type: "LineString", coordinates: coords } }];
 }
@@ -45,7 +45,7 @@ const OVERLAY_SOURCES = ["route", "zone", "lanes", "trace", "cut"];
 function ensureOverlay() {
   if (!map.isStyleLoaded()) return false;
   OVERLAY_SOURCES.forEach((name) => {
-    if (!map.getSource(name)) map.addSource(name, emptyGeojson());
+    if (!map.getSource(name)) map.addSource(name, geojsonSource());
   });
   if (!map.getLayer("route-layer")) {
     map.addLayer({ id: "route-layer", type: "line", source: "route", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": "#16a34a", "line-width": 3.5, "line-opacity": 0.9 } });
@@ -119,8 +119,8 @@ function showHint() {
 async function audit() {
   stopPlayback();
   const trace = document.getElementById("trace").value;
-  const zones = Object.keys(state.fixtures.zones);
-  const route = Object.keys(state.fixtures.routes)[0];
+  const zones = state.fixtures.zones;
+  const route = state.fixtures.trace_routes[trace] || state.fixtures.routes[0];
 
   clearGeo();
   await ready();
@@ -228,8 +228,8 @@ async function review() {
 
   const body = {
     trace: document.getElementById("trace").value,
-    zones: Object.keys(state.fixtures.zones),
-    route: Object.keys(state.fixtures.routes)[0],
+    zones: state.fixtures.zones,
+    route: state.fixtures.trace_routes[document.getElementById("trace").value] || state.fixtures.routes[0],
     lanes: state.fixtures.lanes,
   };
   try {
@@ -266,7 +266,7 @@ function play() {
   const coords = pts.map((p) => [p.lon, p.lat]);
   let i = 0;
 
-  if (!map.getSource("replay")) map.addSource("replay", emptyGeojson());
+  if (!map.getSource("replay")) map.addSource("replay", geojsonSource());
   if (!map.getLayer("replay-marker")) {
     map.addLayer({
       id: "replay-marker",

@@ -143,6 +143,7 @@ def audit_trace(
     min_deep_points: int = 3,
     anchor_m: float = 60.0,
     one_way_lanes: list | None = None,
+    lane_match_m: float = 15.0,
 ) -> DetectedEvent:
     """Verdict for one trace against the legal route and forbidden-zone polygons.
 
@@ -150,6 +151,10 @@ def audit_trace(
       Each is a legal carriageway whose authorized direction is its point order
       (first -> last). A trace hugging that lane but moving the other way is
       a WRONG_WAY violation regardless of the forbidden zones.
+
+    lane_match_m: the radius used to decide a single trace point sits ON a
+      one-way lane. Must stay below the gap between opposing carriageways
+      (the bypass lanes here are ~37m apart). Default 15m.
     """
     if len(trace.points) < 2:
         return DetectedEvent(verdict=Verdict.CLEAN, reason="trace too short")
@@ -222,7 +227,7 @@ def audit_trace(
 
     # Not deep in a zone: WRONG_WAY check against explicitly listed one-way lanes.
     if one_way_lanes:
-        wrong = _wrong_way_via_lanes(trace, one_way_lanes, off_route_m)
+        wrong = _wrong_way_via_lanes(trace, one_way_lanes, lane_match_m)
         if wrong:
             return wrong
 
@@ -299,13 +304,17 @@ def audit_trace(
     )
 
 
-def _wrong_way_via_lanes(trace: Trace, lanes, off_route_m: float) -> DetectedEvent | None:
+def _wrong_way_via_lanes(trace: Trace, lanes, lane_match_m: float) -> DetectedEvent | None:
     """WRONG_WAY verdict if the trace hugs a one-way lane but moves against it.
 
     Each lane is {"points", "name"}: its authorized direction is first->last.
     Every trace point is matched to its nearest lane; if the trace is
     predominantly on one lane yet its overall bearing opposes the lane's
     authorized bearing by >=120 deg, that is driving the wrong way.
+
+    lane_match_m is the tight radius used to decide a trace points sits ON a
+    lane. It must be smaller than the gap between opposing carriageways so a
+    rider legally on one lane is not confused with the opposite one-way lane.
     """
     if not lanes:
         return None
@@ -319,7 +328,7 @@ def _wrong_way_via_lanes(trace: Trace, lanes, off_route_m: float) -> DetectedEve
         lons = all_lons[id(ln)]
         on = sum(
             1 for p in trace.points
-            if distance_to_route_m(p.lat, p.lon, lats, lons) <= off_route_m
+            if distance_to_route_m(p.lat, p.lon, lats, lons) <= lane_match_m
         ) / len(trace.points)
         if on > best_frac:
             best_frac, best_lane = on, ln

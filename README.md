@@ -11,8 +11,9 @@
 
 ## 📹 Demo Video
 
-> **[▶ Watch the 3-Minute YouTube Demo Video](https://youtu.be/YOUR_VIDEO_ID_HERE)**  
-> *(Shows live violation detection, AWS Cedar dispatch suspension, and the AWS Strands edge-case resolution loop.)*
+[![Watch the demo](https://img.youtube.com/vi/MEsncWw6f2o/maxresdefault.jpg)](https://youtu.be/MEsncWw6f2o)
+
+*(Shows live violation detection, AWS Cedar dispatch suspension, and the AWS Strands edge-case resolution loop.)*
 
 ---
 

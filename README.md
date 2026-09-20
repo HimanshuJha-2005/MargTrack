@@ -22,20 +22,43 @@ auditable, GPS-derived check of each trip. That gap is MargTrack.
 
 ## Quickstart (Build It, local)
 
-    python main.py --trace src/traces/illegal_under_bridge_cut.json --zone src/zones/ajwa_bridge.json
+Run the audit on a trace and print a verdict:
+
+    python main.py --trace src/traces/illegal_shortcut.json --zone src/zones/ajwa_bridge.json
+
+Launch the dashboard (serves map tiles, fixtures, `POST /api/audit`,
+`POST /api/review`, and a custom-trace upload endpoint):
+
+    python dashboard/server.py          # http://localhost:8000
 
 Run checks (no deps beyond the standard library):
 
     python -m unittest discover -s tests -p "test_*.py"
 
+Compliance extras (beyond stdlib):
+
+- **AWS Cedar dispatch gate** — `pip install cedarpy`; audits then evaluate
+  `Action::"DispatchRide"` against the driver's safety score. Without cedarpy
+  the inline Python fallback in `src/audit/policy.py` applies the same rule.
+- **Strands Tier-3 agent** — optional (heavy). Set `USE_BEDROCK=1` in
+  `src/agent/review_agent.py` to run the model on Amazon Bedrock
+  (`amazon.nova-micro-v1:0`) instead of a local Ollama server.
+
 ## Trace fixtures
 
 - `clean_legal.json`            - follows the legal corridor -> CLEAN
-- `illegal_under_bridge_cut.json` - cuts under the bridge -> VIOLATION
-- `ambiguous_gps_drift.json`    - off-route but no zone entry -> AMBIGUOUS (review)
+- `wrong_way.json`              - rides the one-way carriageway backwards -> WRONG_WAY (confirmed)
+- `illegal_shortcut.json`       - cuts across the one-way median under the flyover -> ZONE_CUT (pending review)
+- `ambiguous_gps_drift.json`    - off-route, gentle GPS wander -> AMBIGUOUS (pending review)
+
+Legal-route references used by the dashboard are kept in
+`src/zones/*_route.json` (see `tools/rebuild_bypass_scenario.py`).
 
 ## Status
 
-Day 1 skeleton: geometry, zone-based cut detection, verdicts, tests, CLI.
-Next: strand real Ajwa Road Bridge coordinates, legal-route fetch (OSRM),
-Strands agent readout, demerit engine, DynamoDB (LocalStack), dashboard.
+Working pipeline: geometry + zone and one-way-lane detection, legal-route
+anchoring per scenario, verdicts with states, unit tests, permissioned
+dispatch policy (Cedar), demerit ledger and safety score, Strands/Bedrock
+review agent, and a dashboard with rider profile, safety score, Cedar gate,
+ops metrics, and custom-trace upload. Next: OSRM legal-route fetch,
+DynamoDB (LocalStack) audit log, live Bedrock deployment.

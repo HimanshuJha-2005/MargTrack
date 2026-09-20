@@ -32,6 +32,8 @@ sys.path.insert(0, os.path.join(REPO, "src"))
 
 from audit import Trace, TracePoint, audit_trace  # noqa: E402
 from agent.review_agent import review_event  # noqa: E402
+from audit import demerit  # noqa: E402
+from audit.policy import evaluate as cedar_evaluate  # noqa: E402
 
 TRACES = {
     "clean_legal": os.path.join(REPO, "src", "traces", "clean_legal.json"),
@@ -61,10 +63,10 @@ LANES = {
 }
 
 LABELS = {
-    "clean_legal": "Clean — legal ride (west bypass carriageway)",
-    "wrong_way": "Wrong-way — riding the one-way west bypass carriageway backwards",
-    "illegal_shortcut": "Shortcut — wrong-way ride cut under the flyover (22.322702, 73.255615 → 22.324924, 73.254964)",
-    "ambiguous_gps_drift": "Ambiguous — subtle GPS drift off the road",
+    "clean_legal": "Clean — legal ride",
+    "wrong_way": "Wrong-way — drove on the one-way carriageway backwards",
+    "illegal_shortcut": "NH48 Flyover Deck — Illegal Service Road Cut",
+    "ambiguous_gps_drift": "Ambiguous — GPS drift off the corridor",
     "ajwa_junction": "Forbidden under-flyover wedge (Ajwa Rd at-grade crossing excluded)",
     "ajwa_route": "Legal route — west bypass carriageway (strict, S→N)",
     "maps_fair_route": "Legal route shown in the SHORTCUT scenario — ~430m loop on real roads (connectors + Ajwa Rd at-grade, no one-way violation)",
@@ -72,6 +74,13 @@ LABELS = {
 }
 
 TRACE_ORDER = ["clean_legal", "wrong_way", "illegal_shortcut", "ambiguous_gps_drift"]
+
+HUMAN_REASONS = {
+    ("VIOLATION", "ZONE_CUT"): "Unauthorized cut across the one-way median under the flyover deck. Head-on hazard.",
+    ("VIOLATION", "WRONG_WAY"): "Rode against the one-way bypass carriageway direction. Head-on hazard.",
+    ("AMBIGUOUS", ""): "Trace left the legal corridor - possible GPS drift, needs a human check.",
+    ("CLEAN", ""): "Ride stayed on the legal corridor.",
+}
 
 TILE_RE = re.compile(r"^/tiles/(\d+)/(\d+)/(\d+)\.png$")
 
@@ -136,30 +145,87 @@ def one_way_lanes(names=None):
 
 
 def run_engine(body: dict) -> dict:
-    trace = load_trace(TRACES[body["trace"]])
+    trace = load_trace_input(body)
     zones = zone_data(body.get("zones", ["ajwa_junction"]))
     lanes = one_way_lanes(body.get("lanes"))
     rl, rn = [], []
-    route = body.get("route") or TRACE_ROUTES.get(body["trace"])
+    route = body.get("route") or TRACE_ROUTES.get(body.get("trace", "upload"))
     if route:
         rl, rn = route_latlons(route)
+    if not rl and not rn:  # uploaded custom trace -> audit against the maps-fair loop
+        rl, rn = route_latlons("maps_fair_route")
 
     event = audit_trace(trace, rl, rn, zones, one_way_lanes=lanes)
     cut = []
     if event.seg_start >= 0 and event.seg_end >= 0:
         cut = [{"lat": p.lat, "lon": p.lon} for p in trace.points[event.seg_start : event.seg_end + 1]]
+    return build_audit_response(body, trace, event, rl, rn, cut)
+
+
+def load_trace_input(body: dict) -> Trace:
+    """Fixture by name, or inline {lat, lon, t} points from a custom upload."""
+    if body.get("points"):
+        pts = [TracePoint(lat=p["lat"], lon=p["lon"], t=p.get("t", i))
+               for i, p in enumerate(body["points"])]
+        return Trace(points=pts)
+    return load_trace(TRACES[body["trace"]])
+
+
+def human_reason(event) -> str:
+    """Plain-English description a fleet supervisor reads, not engine jargon."""
+    return HUMAN_REASONS.get((event.verdict.value, event.violation_type or ""), event.reason)
+
+
+def ops_metrics(trace, route_lats, route_lons, ride_ms: float = 8.3) -> list[dict]:
+    """Human operations metrics: corridor length, ride distance, time cheat."""
+    import math as _math
+
+    def dist_km(poly_lats, poly_lons):
+        R = 6371.0
+        ring = [(la, lo) for la, lo in zip(poly_lats, poly_lons) if la is not None and lo is not None]
+        if len(ring) < 2:
+            return 0.0
+        total = 0.0
+        for (la1, lo1), (la2, lo2) in zip(ring, ring[1:]):
+            p, q, r, s = map(_math.radians, (la1, lo1, la2, lo2))
+            h = _math.sin((p - r) / 2) ** 2 + _math.cos(p) * _math.cos(r) * _math.sin((q - s) / 2) ** 2
+            total += 2 * R * _math.asin(_math.sqrt(min(1.0, h)))
+        return total
+
+    ride_pts = [(p.lat, p.lon) for p in trace.points]
+    ride_km = dist_km([la for la, _ in ride_pts], [lo for _, lo in ride_pts])
+    route_km = dist_km(route_lats, route_lons)
+    ride_min = ride_km / (ride_ms * 60 / 1000) if ride_km else 0.0
+    route_min = route_km / (ride_ms * 60 / 1000) if route_km else 0.0
+    minutes_saved = max(0.0, route_min - ride_min)
+
+    rows = [
+        {"label": "Legal corridor", "value": f"{route_km:.1f} km (~{max(1, round(route_min))} min)"},
+        {"label": "Ride taken", "value": f"{ride_km:.2f} km (~{max(1, round(ride_min))} min)"},
+        {"label": "Time cheated", "value": f"~{minutes_saved:.1f} min saved" if minutes_saved else "none"},
+    ]
+    return rows
+
+
+def build_audit_response(body, trace, event, rl, rn, cut) -> dict:
+    score = demerit.demo_ledger(event)
+    gate = cedar_evaluate(score["safety_score"], score["unresolved_violations"])
     return {
         "verdict": event.verdict.value,
         "reason": event.reason,
+        "human_reason": human_reason(event),
         "state": event.state.value,
         "severity": event.severity,
         "violation_type": event.violation_type,
         "seg_start": event.seg_start,
         "seg_end": event.seg_end,
         "metrics": event.metrics,
+        "ops_metrics": ops_metrics(trace, rl, rn),
+        "safety": score,
+        "dispatch": gate,
         "points": [{"lat": p.lat, "lon": p.lon, "t": p.t} for p in trace.points],
         "cut": cut,
-        "trace_name": body["trace"],
+        "trace_name": body.get("trace", "upload"),
     }
 
 
@@ -239,13 +305,15 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/audit":
                 return self._send(200, run_engine(body))
             if self.path == "/api/review":
-                trace = load_trace(TRACES[body["trace"]])
+                trace = load_trace_input(body)
                 zones = zone_data(body.get("zones", ["ajwa_junction"]))
                 lanes = one_way_lanes(body.get("lanes"))
                 rl, rn = [], []
-                route = body.get("route") or TRACE_ROUTES.get(body["trace"])
+                route = body.get("route") or TRACE_ROUTES.get(body.get("trace", "upload"))
                 if route:
                     rl, rn = route_latlons(route)
+                if not rl and not rn:
+                    rl, rn = route_latlons("maps_fair_route")
                 return self._send(200, review_event(trace, rl, rn, zones, one_way_lanes=lanes))
             self._send(404, {"error": "unknown endpoint"})
         except KeyError as exc:

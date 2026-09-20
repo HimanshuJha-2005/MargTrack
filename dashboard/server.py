@@ -176,8 +176,20 @@ def human_reason(event) -> str:
     return HUMAN_REASONS.get((event.verdict.value, event.violation_type or ""), event.reason)
 
 
-def ops_metrics(trace, route_lats, route_lons, ride_ms: float = 8.3) -> list[dict]:
-    """Human operations metrics: corridor length, ride distance, time cheat."""
+def fmt_duration(mins: float) -> str:
+    """Human duration: seconds under a minute, whole minutes above."""
+    if mins < 1.0:
+        return "~{} s".format(max(1, round(mins * 60)))
+    return "~{} min".format(max(1, round(mins)))
+
+
+def ops_metrics(trace, route_lats, route_lons, event, ride_ms: float = 8.3) -> list[dict]:
+    """Human operations metrics: corridor length, ride distance, time cheat.
+
+    Time-cheated is only reported for established violations (VIOLATION).
+    Ambiguous/clean rides show "no cheat detected" - never imply guilt the
+    audit did not prove.
+    """
     import math as _math
 
     def dist_km(poly_lats, poly_lons):
@@ -197,19 +209,23 @@ def ops_metrics(trace, route_lats, route_lons, ride_ms: float = 8.3) -> list[dic
     route_km = dist_km(route_lats, route_lons)
     ride_min = ride_km / (ride_ms * 60 / 1000) if ride_km else 0.0
     route_min = route_km / (ride_ms * 60 / 1000) if route_km else 0.0
-    minutes_saved = max(0.0, route_min - ride_min)
+    minutes_saved = max(0.0, route_min - ride_min) if event.verdict.value == "VIOLATION" else 0.0
 
     rows = [
-        {"label": "Legal corridor", "value": f"{route_km:.1f} km (~{max(1, round(route_min))} min)"},
-        {"label": "Ride taken", "value": f"{ride_km:.2f} km (~{max(1, round(ride_min))} min)"},
-        {"label": "Time cheated", "value": f"~{minutes_saved:.1f} min saved" if minutes_saved else "none"},
+        {"label": "Legal corridor", "value": f"{route_km:.1f} km ({fmt_duration(route_min)})"},
+        {"label": "Ride taken", "value": f"{ride_km:.2f} km ({fmt_duration(ride_min)})"},
     ]
+    if event.verdict.value == "VIOLATION" and minutes_saved:
+        rows.append({"label": "Time cheated", "value": "~{} s saved".format(max(1, round(minutes_saved * 60)))})
+    else:
+        rows.append({"label": "Time cheated", "value": "no cheat detected"})
     return rows
 
 
 def build_audit_response(body, trace, event, rl, rn, cut) -> dict:
     score = demerit.demo_ledger(event)
     gate = cedar_evaluate(score["safety_score"], score["unresolved_violations"])
+    status = ("ON HOLD" if gate["decision"] == "DENIED" else score["status"])
     return {
         "verdict": event.verdict.value,
         "reason": event.reason,
@@ -220,8 +236,9 @@ def build_audit_response(body, trace, event, rl, rn, cut) -> dict:
         "seg_start": event.seg_start,
         "seg_end": event.seg_end,
         "metrics": event.metrics,
-        "ops_metrics": ops_metrics(trace, rl, rn),
+        "ops_metrics": ops_metrics(trace, rl, rn, event),
         "safety": score,
+        "trip_status": status,
         "dispatch": gate,
         "points": [{"lat": p.lat, "lon": p.lon, "t": p.t} for p in trace.points],
         "cut": cut,

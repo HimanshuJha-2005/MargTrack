@@ -123,6 +123,7 @@ main {
 .trip-status.active { background: var(--clean); }
 .trip-status.suspended { background: var(--ambiguous); }
 .trip-status.blocked { background: var(--violation); }
+.trip-status.on-hold { background: var(--ambiguous); }
 
 .compliance {
   display: grid;

@@ -192,8 +192,8 @@ function renderVerdict(res) {
   document.getElementById("cedar-note").textContent = d.decision === "ALLOWED"
     ? "dispatches open"
     : "dispatches blocked";
-  document.getElementById("trip-status").className = "trip-status " + ((s.status || "").toLowerCase());
-  document.getElementById("trip-status").textContent = s.status || "—";
+  document.getElementById("trip-status").className = "trip-status " + ((res.trip_status || s.status || "").toLowerCase().replace(" ", "-"));
+  document.getElementById("trip-status").textContent = res.trip_status || s.status || "—";
 
   const replay = document.getElementById("play-btn");
   replay.disabled = !res.points || !res.points.length;

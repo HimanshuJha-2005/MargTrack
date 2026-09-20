@@ -164,7 +164,7 @@ function renderVerdict(res) {
   const verdict = document.getElementById("verdict");
   verdict.className = "badge " + (res.verdict === "CLEAN" ? "clean" : res.verdict === "VIOLATION" ? "violation" : "ambiguous");
   verdict.textContent = res.verdict;
-  document.getElementById("reason").textContent = res.reason;
+  document.getElementById("reason").textContent = res.human_reason || res.reason;
   document.getElementById("state").textContent = res.state;
   document.getElementById("severity").textContent = res.severity;
 
@@ -177,35 +177,66 @@ function renderVerdict(res) {
     vtype.textContent = "";
   }
 
-  const metrics = document.getElementById("metrics");
-  metrics.innerHTML = "";
-  const m = res.metrics || {};
-  if ("trace_len_m" in m) {
-    metrics.appendChild(field("trace distance", m.trace_len_m + " m"));
-    metrics.appendChild(field("legal distance", m.route_len_m + " m"));
-    metrics.appendChild(field("shortcut factor", "x" + m.shortcut_factor));
-    if (m.bearing_delta_deg != null) metrics.appendChild(field("wrong-way bearing", m.bearing_delta_deg + " °"));
-  } else if ("bearing_delta_deg" in m) {
-    if (m.lane) metrics.appendChild(field("against lane", m.lane));
-    metrics.appendChild(field("lane bearing", (m.lane_bearing ?? m.route_bearing ?? 0) + " °"));
-    metrics.appendChild(field("trace bearing", (m.trace_bearing ?? 0) + " °"));
-    metrics.appendChild(field("wrong-way bearing", m.bearing_delta_deg + " °"));
-  } else if ("off_route_frac" in m) {
-    metrics.appendChild(field("points off route", m.off_route_count + " / " + m.total_points));
-    metrics.appendChild(field("off-route share", Math.round(m.off_route_frac * 100) + " %"));
-    metrics.appendChild(field("flag threshold", "≥ 20 %"));
-  } else {
-    metrics.appendChild(field("points", m.total_points ?? res.points?.length ?? "—"));
-    if (m.on_corridor) metrics.appendChild(field("on corridor", m.on_corridor));
-    metrics.appendChild(field("off-route tolerance", m.off_route_tolerance + " m"));
-  }
+  renderOpsMetrics(res.ops_metrics || []);
+  renderEngineLog(res.metrics || {}, res);
+
+  // safety ledger + Cedar gate
+  const s = res.safety || {};
+  document.getElementById("score-value").textContent = s.safety_score ?? "—";
+  const scoreSub = document.getElementById("score-sub");
+  scoreSub.textContent = penaltyText(s) || (s.status || "").toLowerCase();
+  const chip = document.getElementById("cedar-chip");
+  const d = res.dispatch || {};
+  chip.textContent = d.decision === "ALLOWED" ? "ALLOWED" : "DENIED";
+  chip.className = "cedar-chip " + (d.decision === "ALLOWED" ? "allow" : "deny");
+  document.getElementById("cedar-note").textContent = d.decision === "ALLOWED"
+    ? "dispatches open"
+    : "dispatches blocked";
+  document.getElementById("trip-status").className = "trip-status " + ((s.status || "").toLowerCase());
+  document.getElementById("trip-status").textContent = s.status || "—";
 
   const replay = document.getElementById("play-btn");
   replay.disabled = !res.points || !res.points.length;
 
   const btn = document.getElementById("review-btn");
   btn.disabled = res.state !== "PENDING_REVIEW";
+  document.getElementById("review-block").hidden = true;
   document.getElementById("review-outcome").textContent = "";
+}
+
+function penaltyText(s) {
+  const p = s.penalty;
+  if (p == null) return "";
+  if (p > 0) return "+" + p + " recovered";
+  if (p < 0) return p + " demerits";
+  return "";
+}
+
+function renderOpsMetrics(rows) {
+  const box = document.getElementById("ops-metrics");
+  box.innerHTML = "";
+  rows.forEach((r) => box.appendChild(field(r.label, r.value)));
+}
+
+function renderEngineLog(m, res) {
+  const box = document.getElementById("metrics");
+  box.innerHTML = "";
+  if ("trace_len_m" in m) {
+    box.appendChild(field("trace distance", m.trace_len_m + " m"));
+    box.appendChild(field("legal distance", m.route_len_m + " m"));
+    box.appendChild(field("shortcut factor", "x" + m.shortcut_factor));
+    if (m.bearing_delta_deg != null) box.appendChild(field("heading delta", m.bearing_delta_deg + " °"));
+  } else if ("bearing_delta_deg" in m) {
+    if (m.lane) box.appendChild(field("against lane", m.lane));
+    box.appendChild(field("heading delta", m.bearing_delta_deg + " °"));
+  } else if ("off_route_frac" in m) {
+    box.appendChild(field("points off route", m.off_route_count + " / " + m.total_points));
+    box.appendChild(field("off-route share", Math.round(m.off_route_frac * 100) + " %"));
+  } else {
+    box.appendChild(field("points", m.total_points ?? res.points?.length ?? "—"));
+    if (m.on_corridor) box.appendChild(field("on corridor", m.on_corridor));
+    box.appendChild(field("off-route tolerance", m.off_route_tolerance + " m"));
+  }
 }
 
 function field(label, value) {
@@ -225,6 +256,8 @@ async function review() {
   btn.textContent = "Asking Tier-3 agent…";
   const out = document.getElementById("review-outcome");
   out.className = "review-outcome";
+  const block = document.getElementById("review-block");
+  block.hidden = true;
 
   const body = {
     trace: document.getElementById("trace").value,
@@ -235,10 +268,16 @@ async function review() {
   try {
     const res = await fetchJson("/api/review", body);
     const verdict = res.agent_recommendation || "—";
-    out.className = "review-outcome " + (verdict === "VIOLATION" ? "danger" : verdict === "NOISE" ? "warn" : "info");
-    out.textContent = "Tier-3 agent → " + verdict;
-    const detail = res.agent_text || res.engine_reason;
-    if (detail) out.textContent += "\n" + detail.slice(0, 220);
+    if (verdict !== "SKIPPED") {
+      block.hidden = false;
+      const reco = document.getElementById("review-reco");
+      reco.textContent = verdict === "VIOLATION" ? "CONFIRM VIOLATION" : verdict === "NOISE" ? "DISMISS AS NOISE" : "REVIEW";
+      reco.className = "review-reco " + (verdict === "VIOLATION" ? "danger" : verdict === "NOISE" ? "warn" : "info");
+      const detail = res.agent_text || res.engine_reason || "";
+      document.getElementById("review-evidence").textContent = detail ? detail.slice(0, 220) : "—";
+    } else {
+      out.textContent = "Tier-3 agent → " + res.engine_reason;
+    }
   } catch (e) {
     out.className = "review-outcome info";
     out.textContent = "agent unreachable: " + e.message;
@@ -246,6 +285,57 @@ async function review() {
     btn.disabled = false;
     btn.textContent = "Ask the Tier-3 review agent";
   }
+}
+
+async function onUpload(file) {
+  stopPlayback();
+  const text = await file.text();
+  let pts;
+  try {
+    pts = parseTraceJson(text);
+  } catch (e) {
+    alert("Invalid trace JSON: " + e.message);
+    return;
+  }
+  if (!pts.length) { alert("Trace has no points."); return; }
+
+  await ready();
+  ensureOverlay();
+  clearGeo();
+
+  const zones = state.fixtures.zones;
+  const body = { points: pts, zones, lanes: state.fixtures.lanes };
+  try {
+    const res = await fetchJson("/api/audit", body);
+    state.current = res;
+    const coords = res.points.map((p) => [p.lon, p.lat]);
+    setSource("trace", lineFeatures(coords));
+    const z = await fetchJson("/api/zone/" + zones[0]);
+    setSource("zone", [{ type: "Feature", geometry: { type: "Polygon", coordinates: [z.ring.map((p) => [p.lon, p.lat])] } }]);
+    const route = res.trace_name === "upload" ? "maps_fair_route" : state.fixtures.trace_routes[res.trace_name];
+    if (route) {
+      const r = await fetchJson("/api/route/" + route);
+      setSource("route", lineFeatures(r.points.map((p) => [p.lon, p.lat])));
+    }
+    fitJunction(coords);
+    renderVerdict(res);
+    document.getElementById("trace-hint").textContent = "Custom trace · " + pts.length + " points";
+  } catch (e) {
+    alert("Audit failed: " + e.message);
+  }
+}
+
+function parseTraceJson(text) {
+  const data = JSON.parse(text);
+  const arr = Array.isArray(data) ? data
+    : data.features && data.features[0] && data.features[0].geometry &&
+      data.features[0].geometry.type === "LineString"
+      ? data.features[0].geometry.coordinates.map((c, i) => ({ lon: c[0], lat: c[1], t: i }))
+      : Array.isArray(data.points) ? data.points
+      : null;
+  if (!arr) throw new Error("expected {points:[...]} or GeoJSON LineString");
+  return arr.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon), t: Number(p.t) || 0 }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
 }
 
 function stopPlayback() {
@@ -308,6 +398,11 @@ function play() {
 }
 
 window.addEventListener("DOMContentLoaded", initUi);
+document.getElementById("trace-file").addEventListener("change", (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f) onUpload(f);
+  e.target.value = "";
+});
 window.audit = audit;
 window.review = review;
 window.play = play;

@@ -24,10 +24,39 @@
   <div id="map"></div>
 
   <aside class="panel">
+    <section class="card">
+      <div class="driver">
+        <div class="driver-id">
+          <span class="avatar">VS</span>
+          <div>
+            <div class="driver-name">Vikram S.</div>
+            <div class="driver-meta">GJ-06-AX-1029 · Blinkit / Rapido</div>
+          </div>
+        </div>
+        <div class="trip-status" id="trip-status">IDLE</div>
+      </div>
+      <div class="compliance">
+        <div class="score-block">
+          <div class="score-kicker">Safety score</div>
+          <div class="score-value" id="score-value">100</div>
+          <div class="score-sub" id="score-sub">no violations</div>
+        </div>
+        <div class="cedar-block">
+          <div class="score-kicker">Cedar dispatch gate</div>
+          <div class="cedar-chip" id="cedar-chip">—</div>
+          <div class="score-sub cedar-note" id="cedar-note"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="controls">
       <label>Scenario
         <select id="trace"></select>
       </label>
+      <div class="upload-row">
+        <input id="trace-file" type="file" accept=".json,application/json"/>
+        <label for="trace-file" class="upload-btn">Upload custom trace .json</label>
+      </div>
       <div class="row">
         <button id="run-btn" onclick="audit()">Run audit</button>
         <button id="play-btn" onclick="play()" disabled>Replay trace</button>
@@ -40,14 +69,29 @@
         <span id="verdict" class="badge">—</span>
         <span class="verdict-meta">
           <span class="pill" id="vtype" hidden></span>
-          <span>state: <strong id="state">—</strong></span>
+          <span>review: <strong id="state">—</strong></span>
           <span>severity: <strong id="severity">—</strong></span>
         </span>
       </div>
       <p id="reason">Pick a scenario and run the audit.</p>
-      <div id="metrics"></div>
+      <div id="ops-metrics"></div>
+
+      <details class="engine-log" id="engine-log">
+        <summary>Engineering log</summary>
+        <div id="metrics"></div>
+      </details>
 
       <button id="review-btn" onclick="review()" disabled>Ask the Tier-3 review agent</button>
+      <div id="review-block" class="review-block" hidden>
+        <div class="review-field">
+          <span class="review-label">Strands recommendation</span>
+          <strong id="review-reco" class="review-reco">—</strong>
+        </div>
+        <div class="review-field">
+          <span class="review-label">Verified evidence</span>
+          <span id="review-evidence" class="review-evidence">—</span>
+        </div>
+      </div>
       <p id="review-outcome" class="review-outcome"></p>
     </section>
 

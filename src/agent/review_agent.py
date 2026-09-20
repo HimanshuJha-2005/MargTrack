@@ -111,8 +111,11 @@ def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None
     """Run the engine, then the Tier-3 agent on a PENDING_REVIEW event.
 
     Routed through one_way_lanes so wrong-way rides are seen by the engine.
-    Returns a dict ready to print: engine verdict + agent recommendation.
+    Returns a dict ready to print: engine verdict + agent recommendation, plus
+    the post-review safety-ledger snapshot when the agent reached a verdict.
     """
+    from audit import demerit
+
     event = audit_trace(trace, route_lats, route_lons, zones, one_way_lanes=one_way_lanes)
 
     if event.state.value != "PENDING_REVIEW":
@@ -157,6 +160,7 @@ def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None
             "engine_reason": event.reason,
             "agent_recommendation": "REVIEW (agent unavailable, keep for human)",
             "agent_error": str(exc),
+            "after_review": demerit.resolve_review(demerit.BASE_SCORE, event, "REVIEW"),
         }
 
     recommendation = "REVIEW"
@@ -172,6 +176,7 @@ def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None
         "engine_reason": event.reason,
         "agent_recommendation": recommendation,
         "agent_text": text.strip(),
+        "after_review": demerit.resolve_review(demerit.BASE_SCORE, event, recommendation),
     }
 
 

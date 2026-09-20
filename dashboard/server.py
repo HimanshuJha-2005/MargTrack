@@ -331,7 +331,12 @@ class Handler(BaseHTTPRequestHandler):
                     rl, rn = route_latlons(route)
                 if not rl and not rn:
                     rl, rn = route_latlons("maps_fair_route")
-                return self._send(200, review_event(trace, rl, rn, zones, one_way_lanes=lanes))
+                out = review_event(trace, rl, rn, zones, one_way_lanes=lanes)
+                if out.get("after_review"):
+                    out["after_dispatch"] = cedar_evaluate(
+                        out["after_review"]["safety_score"], out["after_review"]["unresolved_violations"]
+                    )
+                return self._send(200, out)
             self._send(404, {"error": "unknown endpoint"})
         except KeyError as exc:
             self._send(400, {"error": f"missing key: {exc}"})

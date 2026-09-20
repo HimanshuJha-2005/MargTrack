@@ -253,7 +253,6 @@ function field(label, value) {
 async function review() {
   const btn = document.getElementById("review-btn");
   btn.disabled = true;
-  btn.textContent = "Asking Tier-3 agent…";
   const out = document.getElementById("review-outcome");
   out.className = "review-outcome";
   const block = document.getElementById("review-block");
@@ -271,10 +270,15 @@ async function review() {
     if (verdict !== "SKIPPED") {
       block.hidden = false;
       const reco = document.getElementById("review-reco");
-      reco.textContent = verdict === "VIOLATION" ? "CONFIRM VIOLATION" : verdict === "NOISE" ? "DISMISS AS NOISE" : "REVIEW";
-      reco.className = "review-reco " + (verdict === "VIOLATION" ? "danger" : verdict === "NOISE" ? "warn" : "info");
+      const normalized = verdict.split(" ")[0];
+      reco.textContent = normalized === "VIOLATION" ? "CONFIRM VIOLATION" : normalized === "NOISE" ? "DISMISS AS NOISE" : "REVIEW MANUAL";
+      reco.className = "review-reco " + (normalized === "VIOLATION" ? "danger" : normalized === "NOISE" ? "warn" : "info");
       const detail = res.agent_text || res.engine_reason || "";
       document.getElementById("review-evidence").textContent = detail ? detail.slice(0, 220) : "—";
+
+      if (res.after_review && res.after_dispatch) {
+        applyResolution(res.after_review, res.after_dispatch, verdict);
+      }
     } else {
       out.textContent = "Tier-3 agent → " + res.engine_reason;
     }
@@ -283,7 +287,35 @@ async function review() {
     out.textContent = "agent unreachable: " + e.message;
   } finally {
     btn.disabled = false;
-    btn.textContent = "Ask the Tier-3 review agent";
+  }
+}
+
+function applyResolution(ledger, dispatch, verdict) {
+  const s = ledger;
+  document.getElementById("score-value").textContent = s.safety_score ?? "—";
+  document.getElementById("score-sub").textContent = s.reason || "";
+  const chip = document.getElementById("cedar-chip");
+  const d = dispatch;
+  chip.textContent = d.decision === "ALLOWED" ? "ALLOWED" : "DENIED";
+  chip.className = "cedar-chip " + (d.decision === "ALLOWED" ? "allow" : "deny");
+  document.getElementById("cedar-note").textContent = d.decision === "ALLOWED"
+    ? "dispatches open"
+    : "dispatches blocked";
+  document.getElementById("trip-status").className = "trip-status " + (d.decision === "ALLOWED" ? "active" : "on-hold");
+  document.getElementById("trip-status").textContent = d.decision === "ALLOWED" ? "ACTIVE" : "ON HOLD";
+
+  const head = verdict.split(" ")[0];
+  const banner = document.getElementById("review-outcome");
+  banner.classList.remove("info", "warn", "danger");
+  if (head === "NOISE") {
+    banner.classList.add("info");
+    banner.textContent = "Strands classified the trace as GPS noise - driver cleared and dispatch reopened.";
+  } else if (head === "VIOLATION") {
+    banner.classList.add("danger");
+    banner.textContent = "Strands confirmed the violation - demerits applied, dispatch stays blocked.";
+  } else {
+    banner.classList.add("warn");
+    banner.textContent = "Strands kept this for a human decision - driver stays on hold.";
   }
 }
 

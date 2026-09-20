@@ -82,3 +82,34 @@ def apply_event(
 def demo_ledger(event: DetectedEvent, agent_confirmed_violation: bool = False) -> dict:
     """Score for the single-event dashboard demo, starting from a full ledger."""
     return apply_event(BASE_SCORE, event, agent_confirmed_violation)
+
+
+def resolve_review(previous_score: int, event: DetectedEvent, recommendation: str) -> dict:
+    """Ledger snapshot after the Tier-3 agent weighs in on a PENDING_REVIEW event.
+
+      NOISE      -> dismissed: score recovers, unresolved cleared, driver cleared.
+      VIOLATION  -> confirmed: demerit + Strands-confirm penalty applied; the case
+                    stays outstanding so dispatch remains blocked until the score
+                    recovers (mirrors a confirmed WRONG_WAY ride).
+      anything else (REVIEW / unavailable / SKIPPED) -> stays pending.
+
+    Returns the same shape as apply_event(), so the dashboard can swap it in.
+    """
+    rec = (recommendation or "").strip().upper()
+
+    if rec == "NOISE":
+        return {
+            "safety_score": min(BASE_SCORE, previous_score + RECOVERY_CLEAN),
+            "penalty": RECOVERY_CLEAN,
+            "status": "ACTIVE",
+            "unresolved_violations": 0,
+            "dispatch_gate": DISPATCH_GATE,
+            "reason": "dismissed as GPS noise - driver cleared",
+        }
+
+    if rec == "VIOLATION":
+        ledger = apply_event(previous_score, event, agent_confirmed_violation=True)
+        ledger["reason"] = "Tier-3 agent confirmed the violation"
+        return ledger  # unresolved stays 1: confirmed is a real demerit, not cleared
+
+    return apply_event(previous_score, event)  # REVIEW / unavailable: stays pending

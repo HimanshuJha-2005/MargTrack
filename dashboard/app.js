@@ -116,6 +116,18 @@ function showHint() {
   document.getElementById("trace-hint").textContent = fx && fx.trace_labels[t] ? fx.trace_labels[t] : "";
 }
 
+async function resetDemo() {
+  try {
+    await fetchJson("/api/reset", {});
+    const outcome = document.getElementById("review-outcome");
+    outcome.className = "review-outcome info";
+    outcome.textContent = "Safety ledger reset - running a fresh audit...";
+    await audit();
+  } catch (e) {
+    alert("Reset failed: " + e.message);
+  }
+}
+
 async function audit() {
   stopPlayback();
   const trace = document.getElementById("trace").value;
@@ -438,6 +450,7 @@ document.getElementById("trace-file").addEventListener("change", (e) => {
 window.audit = audit;
 window.review = review;
 window.play = play;
+window.resetDemo = resetDemo;
 
 map.on("load", () => {
   ensureOverlay();

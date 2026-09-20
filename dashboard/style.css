@@ -250,6 +250,8 @@ button:hover { background: #1d4ed8; }
 button:disabled { background: #cbd5e1; cursor: not-allowed; }
 #review-btn { background: #7c3aed; }
 #review-btn:hover:not(:disabled) { background: #6d28d9; }
+#reset-btn { background: #475569; }
+#reset-btn:hover:not(:disabled) { background: #334155; }
 
 .verdict-card {
   background: var(--panel);

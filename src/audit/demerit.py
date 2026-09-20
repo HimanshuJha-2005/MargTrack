@@ -33,14 +33,13 @@ def penalty_for(event: DetectedEvent, agent_confirmed_violation: bool = False) -
     """The demerit points for one audit event, before applying to a ledger."""
     if event.verdict == Verdict.CLEAN:
         return RECOVERY_CLEAN
-    if event.verdict != Verdict.VIOLATION:
-        return 0  # AMBIGUOUS / noise: no penalty yet, still counts unresolved
 
     penalty = 0
-    if event.violation_type == ViolationType.WRONG_WAY:
+    if event.verdict == Verdict.VIOLATION and event.violation_type == ViolationType.WRONG_WAY:
         penalty += PENALTY_WRONG_WAY
-    elif event.violation_type == ViolationType.ZONE_CUT:
+    elif event.verdict == Verdict.VIOLATION and event.violation_type == ViolationType.ZONE_CUT:
         penalty += PENALTY_ZONE_CUT
+    # AMBIGUOUS / noise: no base penalty yet, still counts unresolved
     if agent_confirmed_violation:
         penalty += PENALTY_AGENT_CONFIRM
     return penalty

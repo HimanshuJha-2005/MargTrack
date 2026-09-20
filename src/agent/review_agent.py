@@ -10,6 +10,7 @@ Usage (local, needs Ollama running):
 """
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -23,6 +24,23 @@ from strands.models.ollama import OllamaModel
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:3b")
 BEDROCK_MODEL = os.environ.get("BEDROCK_MODEL", "amazon.nova-micro-v1:0")
+
+_RECO_WORD = re.compile(r"(?:^|:\s*)(VIOLATION|NOISE|REVIEW)\b", re.IGNORECASE)
+
+
+def parse_recommendation(text: str) -> str:
+    """Extract the agent's verdict from its reply, strictly.
+
+    The system prompt asks for the recommendation word on its own line (optionally
+    after a 'Recommendation:' label), then reasoning. We only trust a vocabulary
+    word that anchors a line - at the very start or right after a colon - so prose
+    like "does not look like a VIOLATION" can never be misread as a verdict.
+    """
+    for line in (text or "").splitlines():
+        m = _RECO_WORD.search(line.strip())
+        if m:
+            return m.group(1).upper()
+    return "REVIEW"
 
 
 def make_model():
@@ -107,15 +125,21 @@ def build_review_agent(evidence: dict):
     return agent, dist_to_route_m, in_any_zone, cut_profile
 
 
-def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None) -> dict:
+def review_event(
+    trace: Trace, route_lats, route_lons, zones, one_way_lanes=None, previous_score: int = None
+) -> dict:
     """Run the engine, then the Tier-3 agent on a PENDING_REVIEW event.
 
     Routed through one_way_lanes so wrong-way rides are seen by the engine.
+    previous_score is the driver's current ledger score; the returned
+    after_review snapshot is computed against it (defaults to BASE_SCORE).
     Returns a dict ready to print: engine verdict + agent recommendation, plus
     the post-review safety-ledger snapshot when the agent reached a verdict.
     """
     from audit import demerit
 
+    if previous_score is None:
+        previous_score = demerit.BASE_SCORE
     event = audit_trace(trace, route_lats, route_lons, zones, one_way_lanes=one_way_lanes)
 
     if event.state.value != "PENDING_REVIEW":
@@ -160,15 +184,10 @@ def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None
             "engine_reason": event.reason,
             "agent_recommendation": "REVIEW (agent unavailable, keep for human)",
             "agent_error": str(exc),
-            "after_review": demerit.resolve_review(demerit.BASE_SCORE, event, "REVIEW"),
+            "after_review": demerit.resolve_review(previous_score, event, "REVIEW"),
         }
 
-    recommendation = "REVIEW"
-    for token in text.split():
-        up = token.strip(",.!()'\"").upper()
-        if up in ("VIOLATION", "NOISE"):
-            recommendation = up
-            break
+    recommendation = parse_recommendation(text)
 
     return {
         "engine_verdict": event.verdict.value,
@@ -176,7 +195,7 @@ def review_event(trace: Trace, route_lats, route_lons, zones, one_way_lanes=None
         "engine_reason": event.reason,
         "agent_recommendation": recommendation,
         "agent_text": text.strip(),
-        "after_review": demerit.resolve_review(demerit.BASE_SCORE, event, recommendation),
+        "after_review": demerit.resolve_review(previous_score, event, recommendation),
     }
 
 

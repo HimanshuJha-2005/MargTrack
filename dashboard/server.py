@@ -162,6 +162,21 @@ def run_engine(body: dict) -> dict:
     return build_audit_response(body, trace, event, rl, rn, cut)
 
 
+SESSION = {"score": demerit.BASE_SCORE, "unresolved": 0, "history": []}
+
+
+def reset_session() -> dict:
+    """Clear the in-memory driver ledger back to a fresh one."""
+    SESSION["score"] = demerit.BASE_SCORE
+    SESSION["unresolved"] = 0
+    SESSION["history"] = []
+    return {"score": SESSION["score"], "unresolved_violations": SESSION["unresolved"]}
+
+
+def session_snapshot() -> dict:
+    return {"score": SESSION["score"], "unresolved_violations": SESSION["unresolved"]}
+
+
 def load_trace_input(body: dict) -> Trace:
     """Fixture by name, or inline {lat, lon, t} points from a custom upload."""
     if body.get("points"):
@@ -223,7 +238,10 @@ def ops_metrics(trace, route_lats, route_lons, event, ride_ms: float = 8.3) -> l
 
 
 def build_audit_response(body, trace, event, rl, rn, cut) -> dict:
-    score = demerit.demo_ledger(event)
+    """Audit one ride against the driver's live session ledger."""
+    score = demerit.apply_event(SESSION["score"], event)
+    SESSION["score"], SESSION["unresolved"] = score["safety_score"], score["unresolved_violations"]
+    SESSION["history"].append({"trace": body.get("trace", "upload"), "verdict": event.verdict.value})
     gate = cedar_evaluate(score["safety_score"], score["unresolved_violations"])
     status = ("ON HOLD" if gate["decision"] == "DENIED" else score["status"])
     return {
@@ -240,6 +258,7 @@ def build_audit_response(body, trace, event, rl, rn, cut) -> dict:
         "safety": score,
         "trip_status": status,
         "dispatch": gate,
+        "session": session_snapshot(),
         "points": [{"lat": p.lat, "lon": p.lon, "t": p.t} for p in trace.points],
         "cut": cut,
         "trace_name": body.get("trace", "upload"),
@@ -331,12 +350,15 @@ class Handler(BaseHTTPRequestHandler):
                     rl, rn = route_latlons(route)
                 if not rl and not rn:
                     rl, rn = route_latlons("maps_fair_route")
-                out = review_event(trace, rl, rn, zones, one_way_lanes=lanes)
+                out = review_event(trace, rl, rn, zones, one_way_lanes=lanes, previous_score=SESSION["score"])
                 if out.get("after_review"):
-                    out["after_dispatch"] = cedar_evaluate(
-                        out["after_review"]["safety_score"], out["after_review"]["unresolved_violations"]
-                    )
+                    ar = out["after_review"]
+                    SESSION["score"], SESSION["unresolved"] = ar["safety_score"], ar["unresolved_violations"]
+                    out["after_dispatch"] = cedar_evaluate(ar["safety_score"], ar["unresolved_violations"])
+                    out["session"] = session_snapshot()
                 return self._send(200, out)
+            if self.path == "/api/reset":
+                return self._send(200, reset_session())
             self._send(404, {"error": "unknown endpoint"})
         except KeyError as exc:
             self._send(400, {"error": f"missing key: {exc}"})

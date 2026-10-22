@@ -1,224 +1,95 @@
 # MargTrack
 
-**GPS-Trace Ride Audit & Dispatch Compliance Engine**  
-*Built for the WeMakeDevs × AWS "First Commit" Hackathon (Bharat Builds Tour 2026) — **Build It Track**.*
+GPS trace audit and dispatch compliance engine. It replays a ride against road geometry, flags wrong-way travel and illegal shortcuts, updates a demerit score, and asks an AWS Cedar policy whether the driver may accept another dispatch.
 
-[![Tests](https://img.shields.io/badge/tests-24%20passing-success.svg)](#test-suite)
-[![AWS Stack](https://img.shields.io/badge/AWS%20Open--Source-Strands%20%2B%20Cedar-orange.svg)](#aws-open-source-stack)
-[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](#quickstart)
+Built for the WeMakeDevs x AWS First Commit Hackathon (Bharat Builds Tour 2026, Build It track).
 
----
+## Why
 
-## 📹 Demo Video
+Ride and delivery platforms already collect GPS breadcrumbs. MargTrack turns that existing telemetry into a compliance signal without adding cameras or roadside hardware. The rules are deterministic and the evidence is inspectable: distance from the corridor, entry and exit points, bearing, and the polygon that was crossed.
 
-[![Watch the demo](https://img.youtube.com/vi/MEsncWw6f2o/maxresdefault.jpg)](https://youtu.be/MEsncWw6f2o)
+The demo area is the Ajwa Road and NH48 flyover junction in Vadodara, Gujarat. The two carriageways are mapped as one-way OSM ways (219869674 and 219869675), and the median gap under the flyover is the forbidden shortcut.
 
-*(Shows live violation detection, AWS Cedar dispatch suspension, and the AWS Strands edge-case resolution loop.)*
+## How an audit runs
 
----
+1. **Geometry and noise filtering.** Haversine distance and segment projection place each point relative to the route and lanes. Ray casting tests forbidden polygons. A speed filter drops points implying more than 200 km/h, and entry/exit anchors reject traces that only touch the corridor.
+2. **Heuristic verdicts.** A bearing delta of 160 degrees or more against an authorized lane is flagged as wrong-way. A shortcut factor of 1.5 or more with a 120 degree delta is flagged as a zone cut. Clear cases end here.
+3. **Agent review for ambiguous cases.** The Strands agent receives the engine's evidence bundle and can call deterministic tools (`dist_to_route_m`, `in_any_zone`, `cut_profile`) that reuse the same geometry code. It recommends VIOLATION or NOISE; the result is a recommendation, not an automatic accusation.
+4. **Demerit ledger.** Drivers start at 100. Wrong-way costs 30 points, a zone cut 15. Clean trips and dismissed noise recover 2 points.
+5. **Cedar dispatch gate.** `Action::"DispatchRide"` is permitted only when the safety score is at least 70 and no violations are unresolved. Otherwise dispatch goes on hold.
 
-## The Problem
+The Cedar policy is in `policies/driver_policy.cedar` and is evaluated through `cedarpy`; a small Python fallback keeps the demo usable without the native module.
 
-Gig delivery and bike-taxi riders face immense delivery pressure. To shave 3–5 minutes off trips, riders routinely cut through no-turn underpasses and drive the wrong way down one-way carriageways, endangering themselves and oncoming traffic.
+## Stack
 
-Existing traffic-compliance solutions rely on expensive CCTV cameras that suffer from blind spots, or traffic police on the ground. However, platforms like Uber, Swiggy, and Rapido **already collect raw GPS breadcrumbs from every single trip**.
+- Python 3.12, no web framework for the engine
+- AWS Cedar via `cedarpy`
+- AWS Strands Agents with Ollama locally (`llama3.2:3b`) or Amazon Bedrock Nova Micro
+- MapLibre GL dashboard with a local Python HTTP server
 
-**MargTrack** is a lightweight, backend compliance layer that audits GPS traces against real road corridors, calculates driver demerits, evaluates **AWS Cedar** dispatch authorization, and invokes an **AWS Strands Agent** for autonomous forensic review.
-
----
-
-## Architecture & Pipeline
-
-```
-  [Raw GPS Trace]
-        │
-        ▼
-┌────────────────────────────────────────────────────────┐
-│ Tier 1: Pure-Math Deterministic Geometry Engine        │
-│  • Haversine & equirectangular segment projection      │
-│  • Ray-casting point-in-polygon checks                 │
-│  • Physical speed filter (< 200 km/h noise cutoff)     │
-│  • Route entry/exit anchor validation                  │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ Tier 2: Heuristic Auto-Confirmation                    │
-│  • High-severity wrong-way (bearing delta ≥ 160°)      │
-│  • Clear cuts (shortcut factor ≥ 1.5 & delta ≥ 120°)   │
-└───────────────────────┬────────────────────────────────┘
-                        │
-       ┌────────────────┴────────────────┐
-       ▼                                 ▼
- [Decisive Verdict]             [Ambiguous Edge Case]
-       │                                 │
-       │                                 ▼
-       │                ┌────────────────────────────────┐
-       │                │ Tier 3: AWS Strands AI Agent   │
-       │                │  • Tool-calling verification   │
-       │                │    (dist_to_route_m, in_zone)  │
-       │                │  • Recommends VIOLATION/NOISE  │
-       │                └────────────────┬───────────────┘
-       │                                 │
-       └────────────────┬────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ Driver Demerit & Safety Ledger                         │
-│  • Base score: 100                                     │
-│  • WRONG_WAY: -30 pts | ZONE_CUT: -15 pts              │
-│  • Clean trip / Noise dismissal: +2 pts recovery       │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ AWS Cedar Compliance Policy Gate                       │
-│  • Evaluates Action::"DispatchRide"                    │
-│  • ALLOWED: Score ≥ 70 & 0 unresolved violations       │
-│  • DENIED: Automatically locks dispatch (ON HOLD)      │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ Interactive Operations Console (MapLibre GL)           │
-│  • Driver card, Cedar chip, ops metrics, upload trace  │
-└────────────────────────────────────────────────────────┘
-```
-
----
-
-## AWS Open-Source Stack
-
-MargTrack leverages key open-source AWS technologies for local, auditable compliance:
-
-1. **AWS Cedar (`policies/driver_policy.cedar` & `src/audit/policy.py`)**:
-   Enforces provable dispatch authorization policies using Cedar's declarative policy language via `cedarpy` (with a zero-dependency Python fallback for offline execution):
-   ```cedar
-   permit(
-       principal,
-       action == Action::"DispatchRide",
-       resource
-   )
-   when {
-       resource.safety_score >= 70 &&
-       resource.unresolved_violations == 0
-   };
-   ```
-
-2. **AWS Strands Agents (`src/agent/review_agent.py`)**:
-   Provides autonomous edge-case investigation. Rather than allowing LLMs to hallucinate geospatial numbers, the Strands agent is equipped with deterministic Python tools (`dist_to_route_m`, `in_any_zone`, `cut_profile`) that close over the exact geometric engine.
-
-3. **Cloud-Ready Hybrid Switch (`USE_BEDROCK=1`)**:
-   Operates on local **Ollama** (`llama3.2:3b`) by default for zero-cost developer testing, and seamlessly switches to **Amazon Bedrock** (`amazon.nova-micro-v1:0`) when `USE_BEDROCK=1` is set.
-
----
-
-## Grounded in Real Geometry
-
-MargTrack is calibrated on real-world OpenStreetMap telemetry at the notorious **Ajwa Road × NH48 Flyover Junction** in Vadodara, Gujarat:
-* **West Carriageway (OSM Way 219869674):** Authorized One-Way South $\rightarrow$ North.
-* **East Carriageway (OSM Way 219869675):** Authorized One-Way North $\rightarrow$ South.
-* **Forbidden Zone:** The narrow median gap under the flyover deck where riders cut across head-on traffic to avoid the legal interchange loop.
-
----
-
-## Trace Fixtures
-
-| Fixture | Scenario Description | Expected Verdict | Cedar Gate |
-| :--- | :--- | :---: | :---: |
-| `clean_legal.json` | Follows the legal bypass corridor correctly | **CLEAN** | **ALLOWED** |
-| `wrong_way.json` | Rides against one-way traffic on the bypass carriageway | **WRONG_WAY** | **DENIED** |
-| `illegal_shortcut.json` | Cuts under the flyover deck through the forbidden median | **ZONE_CUT** | **DENIED** |
-| `ambiguous_gps_drift.json` | Off-route wander without entering forbidden zones (GPS drift) | **AMBIGUOUS** | **ON HOLD** $\rightarrow$ **ALLOWED** *(via Strands)* |
-
----
-
-## Quickstart (Local "Build It" Setup)
-
-### 1. Environment Setup
+## Quick start
 
 ```bash
-# Clone repository
-git clone https://github.com/HimanshuJha-2005/MargTrack.git
-cd MargTrack
-
-# Create and activate virtual environment
 python -m venv .venv
-source .venv/bin/activate       # On Linux/macOS
-.\.venv\Scripts\activate        # On Windows
-
-# Install dependencies
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pip install cedarpy             # Optional: for native Rust Cedar bindings
-```
 
-### 2. Run the Test Suite
-
-MargTrack includes 24 comprehensive unit tests covering geometry, noise guards, demerit ledgers, Cedar policy gates, and verdict parsers:
-
-```bash
+# Tests
 python -m unittest discover -s tests -p "test_*.py"
-```
-*(All 24 tests run in under 0.2 seconds).*
 
-### 3. CLI Audit
-
-Run an instant audit from the command line:
-
-```bash
+# CLI audit
 python main.py --trace src/traces/illegal_shortcut.json \
                --zone src/zones/ajwa_bridge.json \
                --route src/zones/maps_fair_route.json \
                --lanes src/zones/lane_0.json src/zones/lane_1.json
-```
 
-### 4. Launch the Interactive Dashboard
-
-```bash
+# Dashboard
 python dashboard/server.py
 ```
-Open **`http://localhost:8000`** in your browser to explore:
-* **MapLibre GL Visualizer:** Replay GPS traces with animated heading markers.
-* **Driver Compliance Card:** Real-time safety score and live AWS Cedar gate status.
-* **High-Signal Operations Metrics:** Distance taken vs legal corridor, time saved/cheated.
-* **Investigate Edge Case (AWS Strands):** Resolves ambiguous traces and updates the Cedar dispatch chip dynamically.
-* **Custom Trace Upload:** Upload any `.json` or GeoJSON LineString file to test any custom route on the fly.
 
----
+The dashboard runs at http://localhost:8000. It supports trace replay, a compliance card, Cedar status, metrics, ambiguous-case review, and custom trace upload.
 
-## Project Structure
+Agent review needs Ollama running with `llama3.2:3b` pulled. Set `USE_BEDROCK=1` to use Amazon Bedrock instead (`amazon.nova-micro-v1:0` by default, configurable with `BEDROCK_MODEL`). Model and host can be overridden with `OLLAMA_MODEL` and `OLLAMA_HOST`.
+
+## Fixtures
+
+| Fixture | Scenario | Verdict | Cedar |
+|---|---|---|---|
+| `clean_legal.json` | Follows the legal corridor | CLEAN | ALLOWED |
+| `wrong_way.json` | Travels against the one-way carriageway | WRONG_WAY | DENIED |
+| `illegal_shortcut.json` | Cuts through the forbidden median | ZONE_CUT | DENIED |
+| `ambiguous_gps_drift.json` | Off-route drift, no forbidden zone | AMBIGUOUS | ON HOLD, then reviewed |
+
+## Tests
+
+24 tests in three files:
+
+- `test_detect.py`: geometry, projection, polygon tests, and noise guards
+- `test_ledger.py`: demerit scoring and the Cedar gate
+- `test_parser.py`: strict parsing of agent recommendations
+
+The suite runs in under a second and needs no network access.
+
+## Layout
 
 ```
-margtrack/
-├── dashboard/                 # MapLibre GL UI & local HTTP API server
-│   ├── index.html             # High-signal compliance dashboard
-│   ├── app.js                 # MapLibre rendering & Strands resolution handling
-│   ├── server.py              # Tile proxy, audit API & session ledger
-│   └── style.css              # Clean, dark/slate typography (no AI slop)
-├── policies/
-│   └── driver_policy.cedar    # AWS Cedar dispatch authorization rules
-├── src/
-│   ├── agent/
-│   │   └── review_agent.py    # AWS Strands agent with deterministic math tools
-│   ├── audit/
-│   │   ├── demerit.py         # Demerit points ledger & score calculation
-│   │   ├── detect.py          # Multi-tier audit engine & noise guards
-│   │   ├── geometry.py        # Pure-math spherical geometry & ray-casting
-│   │   ├── policy.py          # AWS Cedar evaluation & offline fallback
-│   │   └── types.py           # Data models & verdict types
-│   ├── traces/                # Real-world test scenarios
-│   └── zones/                 # Road corridors & forbidden polygons
-├── tests/
-│   ├── test_detect.py         # Geometry engine & noise filter tests
-│   ├── test_ledger.py         # Demerit ledger & Cedar gate tests
-│   └── test_parser.py         # Robust Strands verdict parsing tests
-├── tools/                     # OSM data fetchers & scenario generators
-├── main.py                    # Standalone CLI entrypoint
-└── requirements.txt           # strands-agents, ollama
+main.py                       CLI entry point
+policies/driver_policy.cedar  dispatch authorization policy
+src/audit/                    geometry, detection, demerits, policy, types
+src/agent/review_agent.py     Strands agent and deterministic tools
+src/traces/                   ride fixtures
+src/zones/                    route, lane, and forbidden-zone polygons
+dashboard/                    MapLibre UI and local API server
+tests/                        unit tests
 ```
 
----
+## Limitations
 
-## License
+- The demo is calibrated to one junction. Supporting a city means ingesting OSM ways and polygons for each corridor.
+- The agent recommends a verdict; a human still owns enforcement decisions.
+- GPS drift, tunnels, and multi-level roads can produce ambiguous evidence, which is why those cases go to review instead of auto-decline.
+- There is no persistent database; the dashboard keeps the session ledger in memory.
 
-MIT License. Built for the WeMakeDevs × AWS BharatBuilds Tour 2026.
+## Demo
+
+Video: https://youtu.be/MEsncWw6f2o

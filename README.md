@@ -93,3 +93,7 @@ tests/                        unit tests
 ## Demo
 
 Video: https://youtu.be/MEsncWw6f2o
+
+## License
+
+MIT. See [LICENSE](LICENSE).
